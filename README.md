@@ -42,6 +42,8 @@ export default defineNuxtConfig({
     // afterLoginPath: '/dashboard',
     // notAuthenticatedPath: '/not-authenticated',
     // afterLogoutPath: '/',
+    // routePrefix: '/api/auth',
+    // composableAlias: 'useAuth',
   },
 })
 ```
@@ -50,6 +52,12 @@ export default defineNuxtConfig({
 vars (`NUXT_IAM_URL`, `NUXT_IAM_APP_ID`, `NUXT_IAM_CLIENT_SECRET`), never
 committed. The four path options are public (client-readable) since they're
 just route paths, not secrets.
+
+`routePrefix` and `composableAlias` exist so more than one consuming app (or
+an app with its own pre-existing `/api/auth/*` routes and `useAuth()`
+composable) can mount this module without collisions — e.g. `home` mounts it
+at `routePrefix: '/api/admin/auth/iam'` with `composableAlias: 'useIamAuth'`
+to sit alongside its own tenant auth.
 
 ```vue
 <!-- e.g. pages/authenticated.vue -->

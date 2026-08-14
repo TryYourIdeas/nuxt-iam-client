@@ -1,4 +1,4 @@
-import { addImportsDir, addServerHandler, addServerImportsDir, createResolver, defineNuxtModule } from '@nuxt/kit'
+import { addImports, addServerHandler, addServerImportsDir, createResolver, defineNuxtModule } from '@nuxt/kit'
 import { defu } from 'defu'
 
 export interface IamCredentials {
@@ -24,6 +24,18 @@ export interface ModuleOptions {
   notAuthenticatedPath?: string
   /** Where to send a visitor after logging out. */
   afterLogoutPath?: string
+  /**
+   * Prefix for the module's three server routes (login/logout/session).
+   * Default: '/api/auth'. Set this when the consuming app already owns
+   * routes at that prefix (e.g. its own tenant auth).
+   */
+  routePrefix?: string
+  /**
+   * Name the auto-imported composable is registered under.
+   * Default: 'useAuth'. Set this when the consuming app already has its
+   * own `useAuth()` composable.
+   */
+  composableAlias?: string
 }
 
 export default defineNuxtModule<ModuleOptions>({
@@ -36,6 +48,8 @@ export default defineNuxtModule<ModuleOptions>({
     afterLoginPath: '/dashboard',
     notAuthenticatedPath: '/not-authenticated',
     afterLogoutPath: '/',
+    routePrefix: '/api/auth',
+    composableAlias: 'useAuth',
   } as ModuleOptions,
   setup(options, nuxt) {
     const resolver = createResolver(import.meta.url)
@@ -49,13 +63,19 @@ export default defineNuxtModule<ModuleOptions>({
       afterLogoutPath: options.afterLogoutPath,
     })
 
+    const routePrefix = options.routePrefix ?? '/api/auth'
+
     addServerImportsDir(resolver.resolve('./runtime/server/utils'))
 
     addServerHandler({ middleware: true, handler: resolver.resolve('./runtime/server/middleware/auth') })
-    addServerHandler({ route: '/api/auth/login', method: 'get', handler: resolver.resolve('./runtime/server/api/auth/login.get') })
-    addServerHandler({ route: '/api/auth/logout', method: 'post', handler: resolver.resolve('./runtime/server/api/auth/logout.post') })
-    addServerHandler({ route: '/api/auth/session', method: 'get', handler: resolver.resolve('./runtime/server/api/auth/session.get') })
+    addServerHandler({ route: `${routePrefix}/login`, method: 'get', handler: resolver.resolve('./runtime/server/api/auth/login.get') })
+    addServerHandler({ route: `${routePrefix}/logout`, method: 'post', handler: resolver.resolve('./runtime/server/api/auth/logout.post') })
+    addServerHandler({ route: `${routePrefix}/session`, method: 'get', handler: resolver.resolve('./runtime/server/api/auth/session.get') })
 
-    addImportsDir(resolver.resolve('./runtime/composables'))
+    addImports({
+      name: 'useAuth',
+      as: options.composableAlias ?? 'useAuth',
+      from: resolver.resolve('./runtime/composables/useAuth'),
+    })
   },
 })
