@@ -1,0 +1,26 @@
+{
+  "name": "nuxt-iam-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/module.ts",
+  "types": "./src/module.ts",
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@nuxt/kit": "^4.5.2",
+    "defu": "^6.1.7",
+    "h3": "^1.15.11"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "nuxt": "^4.5.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}
