@@ -85,8 +85,19 @@ Not published to a registry — add it as a relative `file:` dependency:
 ```bash
 npm install
 npm test         # vitest — pure-function tests (JWT decode, audience matching)
+                  # plus useAuth() composable tests (routePrefix is honored,
+                  # not hardcoded — see docs/learnings/route-prefix-hardcoded-in-composable.md)
 npm run typecheck # tsc --noEmit — covers src/module.ts only
 ```
+
+**Any option added to `module.ts` that a consuming app can override (`routePrefix`,
+`composableAlias`, etc.) must be checked for every place it's *used*, not just
+where it's *set*.** `routePrefix` was originally only threaded through
+`module.ts`'s `addServerHandler` calls (server route registration) and missed
+`src/runtime/composables/useAuth.ts` (client-side `fetchSession()`/`logout()`
+fetch URLs), which kept the old hardcoded `/api/auth/*` paths — silently
+broken for any consumer using a non-default `routePrefix`, with no error at
+setup time. See `docs/learnings/route-prefix-hardcoded-in-composable.md`.
 
 `src/runtime/**` isn't typechecked standalone — it depends on ambient
 auto-import types (`useRuntimeConfig`, `useStorage`, `defineEventHandler`,
