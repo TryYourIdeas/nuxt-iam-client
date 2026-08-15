@@ -56,14 +56,15 @@ export default defineNuxtModule<ModuleOptions>({
 
     const runtimeConfig = nuxt.options.runtimeConfig as Record<string, any>
     runtimeConfig.iam = defu(runtimeConfig.iam as Record<string, unknown> | undefined, options.iam)
+    const routePrefix = options.routePrefix ?? '/api/auth'
+
     runtimeConfig.public.iamClient = defu(runtimeConfig.public.iamClient as Record<string, unknown> | undefined, {
       authenticatedPath: options.authenticatedPath,
       afterLoginPath: options.afterLoginPath,
       notAuthenticatedPath: options.notAuthenticatedPath,
       afterLogoutPath: options.afterLogoutPath,
+      routePrefix,
     })
-
-    const routePrefix = options.routePrefix ?? '/api/auth'
 
     addServerImportsDir(resolver.resolve('./runtime/server/utils'))
 
