@@ -103,6 +103,14 @@ export function decodeJwtPayload(jwt: string): Record<string, unknown> {
 
 export async function exchangeCode(event: H3Event, code: string): Promise<TokenResponse> {
   const { iam } = useRuntimeConfig(event)
+  if (!iam.url || !iam.appId || !iam.clientSecret) {
+    iamDebugLog('exchangeCode', 'one or more NUXT_IAM_* config values are empty', {
+      urlSet: Boolean(iam.url),
+      appIdSet: Boolean(iam.appId),
+      clientSecretSet: Boolean(iam.clientSecret),
+    })
+  }
+
   const response = await fetch(`${iamBaseUrl(iam.url)}/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -116,9 +124,11 @@ export async function exchangeCode(event: H3Event, code: string): Promise<TokenR
 
   if (!response.ok) {
     const error = (await response.json()) as TokenErrorResponse
+    iamDebugLog('exchangeCode', 'token exchange failed', { status: response.status, error: error.error, message: error.message })
     throw new Error(`Token exchange failed: ${error.error} — ${error.message}`)
   }
 
+  iamDebugLog('exchangeCode', 'token exchange succeeded')
   return (await response.json()) as TokenResponse
 }
 
@@ -136,9 +146,11 @@ export async function refreshAccessToken(event: H3Event, refreshToken: string): 
   })
 
   if (!response.ok) {
+    iamDebugLog('refreshAccessToken', 'refresh failed', { status: response.status })
     throw new Error('Refresh failed')
   }
 
+  iamDebugLog('refreshAccessToken', 'refresh succeeded')
   return (await response.json()) as RefreshResponse
 }
 
@@ -155,25 +167,35 @@ export async function createIamSession(
     secure: process.env.NODE_ENV === 'production',
     path: '/',
   })
+  iamDebugLog('createIamSession', 'iam session created', { email: data.email, expiresAt: data.accessTokenExpiresAt })
   return session
 }
 
 export async function getIamSession(event: H3Event): Promise<Session | null> {
   const id = getCookie(event, SESSION_COOKIE)
-  if (!id) return null
+  if (!id) {
+    iamDebugLog('getIamSession', 'no session cookie present')
+    return null
+  }
 
   const storage = useStorage(STORAGE_KEY)
   const session = (await storage.getItem(id)) as Session | null
-  if (!session) return null
+  if (!session) {
+    iamDebugLog('getIamSession', 'session cookie present but no matching session in storage')
+    return null
+  }
 
   if (Date.now() >= session.accessTokenExpiresAt) {
+    iamDebugLog('getIamSession', 'access token expired, attempting refresh', { email: session.email })
     try {
       const refreshed = await refreshAccessToken(event, session.refreshToken)
       session.accessToken = refreshed.token
       session.refreshToken = refreshed.refresh_token
       session.accessTokenExpiresAt = Date.now() + refreshed.expires_in * 1000
       await storage.setItem(id, session)
+      iamDebugLog('getIamSession', 'access token refreshed', { email: session.email })
     } catch {
+      iamDebugLog('getIamSession', 'refresh failed, destroying session', { email: session.email })
       await destroyIamSession(event)
       return null
     }
@@ -186,6 +208,7 @@ export async function destroyIamSession(event: H3Event) {
   const id = getCookie(event, SESSION_COOKIE)
   if (id) await useStorage(STORAGE_KEY).removeItem(id)
   deleteCookie(event, SESSION_COOKIE)
+  iamDebugLog('destroyIamSession', 'session destroyed', { hadSession: Boolean(id) })
 }
 
 export function audienceMatches(aud: string | string[], appId: string): boolean {
