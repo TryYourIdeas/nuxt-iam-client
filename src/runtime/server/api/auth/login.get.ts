@@ -13,6 +13,6 @@ export default defineEventHandler(async (event) => {
   setAuthAttempt(event, attempt)
 
   const redirectUrl = buildAuthorizationUrl(config.iam.url, config.iam.appId, attempt)
-  iamDebugLog('login', 'redirecting to iam for authorization', { iamUrl: config.iam.url, appIdSet: Boolean(config.iam.appId) })
+  iamDebugLog('login', 'redirecting to iam for authorization', { iamUrl: config.iam.url, appId: config.iam.appId, redirectUrl })
   return sendRedirect(event, redirectUrl)
 })

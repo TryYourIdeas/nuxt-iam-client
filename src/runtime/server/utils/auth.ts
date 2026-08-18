@@ -103,13 +103,11 @@ export function decodeJwtPayload(jwt: string): Record<string, unknown> {
 
 export async function exchangeCode(event: H3Event, code: string): Promise<TokenResponse> {
   const { iam } = useRuntimeConfig(event)
-  if (!iam.url || !iam.appId || !iam.clientSecret) {
-    iamDebugLog('exchangeCode', 'one or more NUXT_IAM_* config values are empty', {
-      urlSet: Boolean(iam.url),
-      appIdSet: Boolean(iam.appId),
-      clientSecretSet: Boolean(iam.clientSecret),
-    })
-  }
+  iamDebugLog('exchangeCode', 'exchanging code using iam config', {
+    url: iam.url,
+    appId: iam.appId,
+    clientSecretSet: Boolean(iam.clientSecret),
+  })
 
   const response = await fetch(`${iamBaseUrl(iam.url)}/token`, {
     method: 'POST',

@@ -1,5 +1,6 @@
 import { addImports, addServerHandler, addServerImportsDir, createResolver, defineNuxtModule } from '@nuxt/kit'
 import { defu } from 'defu'
+import { iamDebugLog } from './runtime/server/utils/iamDebugLog'
 
 export interface IamCredentials {
   /** Base URL of the `iam` instance, e.g. "https://iam.tryyourideas.com" */
@@ -57,6 +58,16 @@ export default defineNuxtModule<ModuleOptions>({
     const runtimeConfig = nuxt.options.runtimeConfig as Record<string, any>
     runtimeConfig.iam = defu(runtimeConfig.iam as Record<string, unknown> | undefined, options.iam)
     const routePrefix = options.routePrefix ?? '/api/auth'
+
+    // Logged at build/config time, before Nuxt's own NUXT_IAM_* runtime-config
+    // env overrides are applied at server start — compare against the
+    // runtime values logged by login.get.ts to tell a stale build-time bake
+    // apart from a runtime env-var problem.
+    iamDebugLog('module setup', 'resolved iam config at build time (pre runtime-env override)', {
+      url: runtimeConfig.iam.url,
+      appId: runtimeConfig.iam.appId,
+      routePrefix,
+    })
 
     runtimeConfig.public.iamClient = defu(runtimeConfig.public.iamClient as Record<string, unknown> | undefined, {
       authenticatedPath: options.authenticatedPath,
