@@ -15,7 +15,6 @@ export interface IamCredentials {
 
 export interface IamClientInstanceConfig {
   dynamic: boolean
-  iam?: IamCredentials
 }
 
 export interface TokenResponse {
@@ -123,16 +122,21 @@ export function decodeJwtPayload(jwt: string): Record<string, unknown> {
  * `getIamSession` already rely on being auto-imported into consumers).
  */
 export async function resolveIamCredentials(event: H3Event, instanceId: string): Promise<IamCredentials | null> {
-  const config = useRuntimeConfig(event) as unknown as { iamClientInstances?: Record<string, IamClientInstanceConfig> }
+  const config = useRuntimeConfig(event) as unknown as {
+    iamClientInstances?: Record<string, IamClientInstanceConfig>
+    iam?: IamCredentials
+  }
   const instance = config.iamClientInstances?.[instanceId]
   if (!instance) {
     throw new Error(`nuxt-iam-client: unknown instanceId "${instanceId}" (no module mount registered it)`)
   }
   if (!instance.dynamic) {
-    if (!instance.iam) {
+    // Read the runtime-overridden runtimeConfig.iam, not a value captured
+    // at build time - see the comment in module.ts's setup() for why.
+    if (!config.iam) {
       throw new Error(`nuxt-iam-client: instance "${instanceId}" is static but has no iam config`)
     }
-    return instance.iam
+    return config.iam
   }
   if (typeof resolveIamAppCredentials !== 'function') {
     throw new Error(

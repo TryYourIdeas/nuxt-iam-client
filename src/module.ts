@@ -84,7 +84,24 @@ export default defineNuxtModule<ModuleOptions>({
     runtimeConfig.iamClientInstances = runtimeConfig.iamClientInstances || {}
     runtimeConfig.iamClientInstances[options.instanceId] = {
       dynamic: Boolean(options.dynamic),
-      iam: options.dynamic ? undefined : options.iam,
+    }
+
+    if (!options.dynamic) {
+      // Static credentials are kept at the *original*, unprefixed
+      // `runtimeConfig.iam` path (not nested under iamClientInstances) so
+      // Nitro's env-override still maps it to NUXT_IAM_URL/NUXT_IAM_APP_ID/
+      // NUXT_IAM_CLIENT_SECRET at server startup - Nitro derives the
+      // override env var name from the exact runtimeConfig path a value
+      // lives at, so nesting it under a per-instanceId key (as an earlier
+      // version of this module did) silently renamed the expected env var
+      // to NUXT_IAM_CLIENT_INSTANCES_<INSTANCEID>_IAM_URL, which nothing
+      // sets - the app then falls back to whatever NUXT_IAM_URL happened to
+      // be on the machine that ran `nuxt build`, forever, regardless of
+      // what the deployed server's real environment says. Only one static
+      // instance can rely on this (today: admin) - a second static mount
+      // would collide on this same key; dynamic instances (tenant) don't
+      // need it, since they resolve credentials from the DB per request.
+      runtimeConfig.iam = defu(runtimeConfig.iam, options.iam)
     }
 
     iamDebugLog('module setup', 'registered iam-client instance at build time (pre runtime-env override)', {
