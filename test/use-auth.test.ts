@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { computed, ref } from 'vue'
 
-// useAuth() is a Nuxt composable - useRuntimeConfig/useState/useRequestFetch/
+// useAuthImpl() is a Nuxt composable - useRuntimeConfig/useState/useRequestFetch/
 // $fetch/navigateTo are all auto-imported globals at runtime, which don't
 // exist in a plain vitest environment. Stub them the same way the real app
 // stubs Nuxt server auto-imports in test/unit/admin-auth.test.ts (home).
@@ -10,14 +10,14 @@ const fetchMock = vi.fn()
 const navigateToMock = vi.fn()
 
 vi.stubGlobal('useRuntimeConfig', () =>
-  ({ public: { iamClient: { routePrefix: '/custom/prefix', afterLogoutPath: '/bye' } } }))
+  ({ public: { iamClient: { test: { routePrefix: '/custom/prefix', afterLogoutPath: '/bye' } } } }))
 vi.stubGlobal('useState', () => ref(null))
 vi.stubGlobal('computed', computed)
 vi.stubGlobal('useRequestFetch', () => requestFetchMock)
 vi.stubGlobal('$fetch', fetchMock)
 vi.stubGlobal('navigateTo', navigateToMock)
 
-describe('useAuth composable', () => {
+describe('useAuthImpl composable', () => {
   beforeEach(() => {
     requestFetchMock.mockReset().mockResolvedValue({ user: null })
     fetchMock.mockReset().mockResolvedValue(undefined)
@@ -25,8 +25,8 @@ describe('useAuth composable', () => {
   })
 
   it('fetchSession() calls `${routePrefix}/session`, not a hardcoded path', async () => {
-    const { useAuth } = await import('../src/runtime/composables/useAuth')
-    const { fetchSession } = useAuth()
+    const { useAuthImpl } = await import('../src/runtime/composables/useAuth')
+    const { fetchSession } = useAuthImpl('test')
 
     await fetchSession()
 
@@ -34,8 +34,8 @@ describe('useAuth composable', () => {
   })
 
   it('logout() calls `${routePrefix}/logout`, not a hardcoded path', async () => {
-    const { useAuth } = await import('../src/runtime/composables/useAuth')
-    const { logout } = useAuth()
+    const { useAuthImpl } = await import('../src/runtime/composables/useAuth')
+    const { logout } = useAuthImpl('test')
 
     await logout()
 

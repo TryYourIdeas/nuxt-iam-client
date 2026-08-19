@@ -3,22 +3,23 @@ export interface AuthUser {
   email: string
 }
 
-export function useAuth() {
+export function useAuthImpl(instanceId: string) {
   const config = useRuntimeConfig()
-  const user = useState<AuthUser | null>('auth-user', () => null)
+  const publicConfig = (config.public.iamClient as Record<string, { routePrefix: string; afterLogoutPath: string }>)[instanceId]
+  const user = useState<AuthUser | null>(`auth-user-${instanceId}`, () => null)
   const status = computed(() => (user.value ? 'authenticated' : 'unauthenticated'))
   const requestFetch = useRequestFetch()
 
   async function fetchSession(): Promise<AuthUser | null> {
-    const data = await requestFetch<{ user: AuthUser | null }>(`${config.public.iamClient.routePrefix}/session`)
+    const data = await requestFetch<{ user: AuthUser | null }>(`${publicConfig.routePrefix}/session`)
     user.value = data.user
     return data.user
   }
 
   async function logout() {
-    await $fetch(`${config.public.iamClient.routePrefix}/logout`, { method: 'POST' })
+    await $fetch(`${publicConfig.routePrefix}/logout`, { method: 'POST' })
     user.value = null
-    await navigateTo(config.public.iamClient.afterLogoutPath)
+    await navigateTo(publicConfig.afterLogoutPath)
   }
 
   return { user, status, fetchSession, logout }
