@@ -1,4 +1,4 @@
-import { addImports, addServerHandler, addServerImportsDir, createResolver, defineNuxtModule } from '@nuxt/kit'
+import { addImports, addServerHandler, addServerImportsDir, addTemplate, createResolver, defineNuxtModule } from '@nuxt/kit'
 import { defu } from 'defu'
 import { iamDebugLog } from './runtime/server/utils/iamDebugLog'
 
@@ -12,7 +12,24 @@ export interface IamCredentials {
 }
 
 export interface ModuleOptions {
-  iam: IamCredentials
+  /**
+   * Distinguishes this mount's cookies, storage namespace, and runtime
+   * config entry from any other mount of this module in the same app.
+   * Required — there is no safe default once more than one mount exists.
+   */
+  instanceId: string
+  /**
+   * Static credentials for this mount. Required unless `dynamic: true`.
+   */
+  iam?: IamCredentials
+  /**
+   * When true, credentials are resolved per request via a
+   * `resolveIamAppCredentials(event)` server util the consuming app must
+   * define (auto-imported, e.g. in its own `server/utils/`). Use this when
+   * one mount serves many logical clients (e.g. one per tenant) instead of
+   * one fixed app.
+   */
+  dynamic?: boolean
   /**
    * Path on this app's own origin that iam redirects back to with
    * ?code=&state=. Must exactly match the authenticated_url registered
@@ -45,6 +62,7 @@ export default defineNuxtModule<ModuleOptions>({
     configKey: 'iamClient',
   },
   defaults: {
+    instanceId: 'default',
     authenticatedPath: '/authenticated',
     afterLoginPath: '/dashboard',
     notAuthenticatedPath: '/not-authenticated',
@@ -55,21 +73,31 @@ export default defineNuxtModule<ModuleOptions>({
   setup(options, nuxt) {
     const resolver = createResolver(import.meta.url)
 
-    const runtimeConfig = nuxt.options.runtimeConfig as Record<string, any>
-    runtimeConfig.iam = defu(runtimeConfig.iam as Record<string, unknown> | undefined, options.iam)
-    const routePrefix = options.routePrefix ?? '/api/auth'
+    if (!options.instanceId) {
+      throw new Error('nuxt-iam-client: `instanceId` module option is required')
+    }
+    if (!options.dynamic && !options.iam) {
+      throw new Error(`nuxt-iam-client: instance "${options.instanceId}" needs \`iam\` credentials unless \`dynamic: true\``)
+    }
 
-    // Logged at build/config time, before Nuxt's own NUXT_IAM_* runtime-config
-    // env overrides are applied at server start — compare against the
-    // runtime values logged by login.get.ts to tell a stale build-time bake
-    // apart from a runtime env-var problem.
-    iamDebugLog('module setup', 'resolved iam config at build time (pre runtime-env override)', {
-      url: runtimeConfig.iam.url,
-      appId: runtimeConfig.iam.appId,
-      routePrefix,
+    const runtimeConfig = nuxt.options.runtimeConfig as Record<string, any>
+    runtimeConfig.iamClientInstances = runtimeConfig.iamClientInstances || {}
+    runtimeConfig.iamClientInstances[options.instanceId] = {
+      dynamic: Boolean(options.dynamic),
+      iam: options.dynamic ? undefined : options.iam,
+    }
+
+    iamDebugLog('module setup', 'registered iam-client instance at build time (pre runtime-env override)', {
+      instanceId: options.instanceId,
+      dynamic: Boolean(options.dynamic),
+      url: options.iam?.url,
+      appId: options.iam?.appId,
     })
 
-    runtimeConfig.public.iamClient = defu(runtimeConfig.public.iamClient as Record<string, unknown> | undefined, {
+    const routePrefix = options.routePrefix ?? '/api/auth'
+
+    runtimeConfig.public.iamClient = runtimeConfig.public.iamClient || {}
+    runtimeConfig.public.iamClient[options.instanceId] = defu(runtimeConfig.public.iamClient[options.instanceId], {
       authenticatedPath: options.authenticatedPath,
       afterLoginPath: options.afterLoginPath,
       notAuthenticatedPath: options.notAuthenticatedPath,
@@ -79,15 +107,52 @@ export default defineNuxtModule<ModuleOptions>({
 
     addServerImportsDir(resolver.resolve('./runtime/server/utils'))
 
-    addServerHandler({ middleware: true, handler: resolver.resolve('./runtime/server/middleware/auth') })
-    addServerHandler({ route: `${routePrefix}/login`, method: 'get', handler: resolver.resolve('./runtime/server/api/auth/login.get') })
-    addServerHandler({ route: `${routePrefix}/logout`, method: 'post', handler: resolver.resolve('./runtime/server/api/auth/logout.post') })
-    addServerHandler({ route: `${routePrefix}/session`, method: 'get', handler: resolver.resolve('./runtime/server/api/auth/session.get') })
+    // Per-mount wrappers: each sets event.context.iamInstanceId to this
+    // mount's fixed instanceId before delegating to the shared handler, so
+    // the same compiled handler file can be registered at multiple routes
+    // (one per mount) and still know which mount it's running for.
+    const wrapperFor = (name: string, handlerPath: string) => {
+      const template = addTemplate({
+        filename: `iam-client-${options.instanceId}-${name}.mjs`,
+        getContents: () =>
+          `import handler from ${JSON.stringify(resolver.resolve(handlerPath))}\n`
+          + `export default (event) => { event.context.iamInstanceId = ${JSON.stringify(options.instanceId)}; return handler(event) }\n`,
+      })
+      return template.dst
+    }
+
+    addServerHandler({
+      middleware: true,
+      handler: wrapperFor('middleware', './runtime/server/middleware/auth'),
+    })
+    addServerHandler({
+      route: `${routePrefix}/login`,
+      method: 'get',
+      handler: wrapperFor('login', './runtime/server/api/auth/login.get'),
+    })
+    addServerHandler({
+      route: `${routePrefix}/logout`,
+      method: 'post',
+      handler: wrapperFor('logout', './runtime/server/api/auth/logout.post'),
+    })
+    addServerHandler({
+      route: `${routePrefix}/session`,
+      method: 'get',
+      handler: wrapperFor('session', './runtime/server/api/auth/session.get'),
+    })
+
+    const composableAlias = options.composableAlias ?? 'useAuth'
+    const composableTemplate = addTemplate({
+      filename: `iam-client-${options.instanceId}-composable.mjs`,
+      getContents: () =>
+        `import { useAuthImpl } from ${JSON.stringify(resolver.resolve('./runtime/composables/useAuth'))}\n`
+        + `export function ${composableAlias}() { return useAuthImpl(${JSON.stringify(options.instanceId)}) }\n`,
+    })
 
     addImports({
-      name: 'useAuth',
-      as: options.composableAlias ?? 'useAuth',
-      from: resolver.resolve('./runtime/composables/useAuth'),
+      name: composableAlias,
+      as: composableAlias,
+      from: composableTemplate.dst,
     })
   },
 })
