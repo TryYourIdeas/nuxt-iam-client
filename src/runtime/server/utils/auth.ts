@@ -7,6 +7,17 @@ export interface AuthAttempt {
   nonce: string
 }
 
+export interface IamCredentials {
+  url: string
+  appId: string
+  clientSecret: string
+}
+
+export interface IamClientInstanceConfig {
+  dynamic: boolean
+  iam?: IamCredentials
+}
+
 export interface TokenResponse {
   token: string
   id_token: string
@@ -34,6 +45,8 @@ export interface Session {
   accessToken: string
   refreshToken: string
   accessTokenExpiresAt: number
+  appId: string
+  metadata?: Record<string, unknown>
 }
 
 export interface IdClaims {
@@ -45,12 +58,20 @@ export interface IdClaims {
   nonce: string
 }
 
-const ATTEMPT_COOKIE = 'iam_attempt'
-const SESSION_COOKIE = 'iam_session'
-const STORAGE_KEY = 'iam:sessions'
-
 function iamBaseUrl(iamUrl: string): string {
   return iamUrl.replace(/\/+$/, '')
+}
+
+export function attemptCookieName(instanceId: string): string {
+  return `iam_attempt_${instanceId}`
+}
+
+export function sessionCookieName(instanceId: string): string {
+  return `iam_session_${instanceId}`
+}
+
+export function sessionStorageNamespace(instanceId: string): string {
+  return `iam:sessions:${instanceId}`
 }
 
 export function generateAttempt(): AuthAttempt {
@@ -60,17 +81,8 @@ export function generateAttempt(): AuthAttempt {
   }
 }
 
-export function buildAuthorizationUrl(iamUrl: string, appId: string, attempt: AuthAttempt): string {
-  const params = new URLSearchParams({
-    app_id: appId,
-    state: attempt.state,
-    nonce: attempt.nonce,
-  })
-  return `${iamBaseUrl(iamUrl)}/auth?${params.toString()}`
-}
-
-export function setAuthAttempt(event: H3Event, attempt: AuthAttempt) {
-  setCookie(event, ATTEMPT_COOKIE, JSON.stringify(attempt), {
+export function setAuthAttempt(event: H3Event, instanceId: string, attempt: AuthAttempt) {
+  setCookie(event, attemptCookieName(instanceId), JSON.stringify(attempt), {
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
@@ -79,8 +91,8 @@ export function setAuthAttempt(event: H3Event, attempt: AuthAttempt) {
   })
 }
 
-export function getAuthAttempt(event: H3Event): AuthAttempt | null {
-  const raw = getCookie(event, ATTEMPT_COOKIE)
+export function getAuthAttempt(event: H3Event, instanceId: string): AuthAttempt | null {
+  const raw = getCookie(event, attemptCookieName(instanceId))
   if (!raw) return null
   try {
     return JSON.parse(raw) as AuthAttempt
@@ -89,8 +101,8 @@ export function getAuthAttempt(event: H3Event): AuthAttempt | null {
   }
 }
 
-export function clearAuthAttempt(event: H3Event) {
-  deleteCookie(event, ATTEMPT_COOKIE)
+export function clearAuthAttempt(event: H3Event, instanceId: string) {
+  deleteCookie(event, attemptCookieName(instanceId))
 }
 
 export function decodeJwtPayload(jwt: string): Record<string, unknown> {
@@ -101,22 +113,44 @@ export function decodeJwtPayload(jwt: string): Record<string, unknown> {
   return JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8'))
 }
 
-export async function exchangeCode(event: H3Event, code: string): Promise<TokenResponse> {
-  const { iam } = useRuntimeConfig(event)
-  iamDebugLog('exchangeCode', 'exchanging code using iam config', {
-    url: iam.url,
-    appId: iam.appId,
-    clientSecretSet: Boolean(iam.clientSecret),
-  })
+/**
+ * Resolves the {url, appId, clientSecret} this instance should use for the
+ * current request. Static instances return their fixed config; dynamic
+ * instances (one mount serving many logical clients, e.g. one per tenant)
+ * delegate to `resolveIamAppCredentials`, a server util the CONSUMING app
+ * must define and which gets auto-imported into this same Nitro build
+ * alongside this module's own utils (same mechanism `iamDebugLog`/
+ * `getIamSession` already rely on being auto-imported into consumers).
+ */
+export async function resolveIamCredentials(event: H3Event, instanceId: string): Promise<IamCredentials | null> {
+  const config = useRuntimeConfig(event) as unknown as { iamClientInstances?: Record<string, IamClientInstanceConfig> }
+  const instance = config.iamClientInstances?.[instanceId]
+  if (!instance) {
+    throw new Error(`nuxt-iam-client: unknown instanceId "${instanceId}" (no module mount registered it)`)
+  }
+  if (!instance.dynamic) {
+    if (!instance.iam) {
+      throw new Error(`nuxt-iam-client: instance "${instanceId}" is static but has no iam config`)
+    }
+    return instance.iam
+  }
+  if (typeof resolveIamAppCredentials !== 'function') {
+    throw new Error(
+      `nuxt-iam-client: instance "${instanceId}" is dynamic but no resolveIamAppCredentials(event) server util was found`
+    )
+  }
+  return resolveIamAppCredentials(event)
+}
 
-  const response = await fetch(`${iamBaseUrl(iam.url)}/token`, {
+export async function exchangeCode(credentials: IamCredentials, code: string): Promise<TokenResponse> {
+  const response = await fetch(`${iamBaseUrl(credentials.url)}/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       grant_type: 'authorization_code',
       code,
-      client_id: iam.appId,
-      client_secret: iam.clientSecret,
+      client_id: credentials.appId,
+      client_secret: credentials.clientSecret,
     }),
   })
 
@@ -126,75 +160,87 @@ export async function exchangeCode(event: H3Event, code: string): Promise<TokenR
     throw new Error(`Token exchange failed: ${error.error} — ${error.message}`)
   }
 
-  iamDebugLog('exchangeCode', 'token exchange succeeded')
+  iamDebugLog('exchangeCode', 'token exchange succeeded', { appId: credentials.appId })
   return (await response.json()) as TokenResponse
 }
 
-export async function refreshAccessToken(event: H3Event, refreshToken: string): Promise<RefreshResponse> {
-  const { iam } = useRuntimeConfig(event)
-  const response = await fetch(`${iamBaseUrl(iam.url)}/token`, {
+export async function refreshAccessToken(credentials: IamCredentials, refreshToken: string): Promise<RefreshResponse> {
+  const response = await fetch(`${iamBaseUrl(credentials.url)}/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       grant_type: 'refresh_token',
       refresh_token: refreshToken,
-      client_id: iam.appId,
-      client_secret: iam.clientSecret,
+      client_id: credentials.appId,
+      client_secret: credentials.clientSecret,
     }),
   })
 
   if (!response.ok) {
-    iamDebugLog('refreshAccessToken', 'refresh failed', { status: response.status })
+    iamDebugLog('refreshAccessToken', 'refresh failed', { status: response.status, appId: credentials.appId })
     throw new Error('Refresh failed')
   }
 
-  iamDebugLog('refreshAccessToken', 'refresh succeeded')
+  iamDebugLog('refreshAccessToken', 'refresh succeeded', { appId: credentials.appId })
   return (await response.json()) as RefreshResponse
 }
 
 export async function createIamSession(
   event: H3Event,
+  instanceId: string,
   data: Omit<Session, 'id'>,
 ): Promise<Session> {
   const id = randomBytes(32).toString('base64url')
   const session: Session = { id, ...data }
-  await useStorage(STORAGE_KEY).setItem(id, session)
-  setCookie(event, SESSION_COOKIE, id, {
+  await useStorage(sessionStorageNamespace(instanceId)).setItem(id, session)
+  setCookie(event, sessionCookieName(instanceId), id, {
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
     path: '/',
   })
-  iamDebugLog('createIamSession', 'iam session created', { email: data.email, expiresAt: data.accessTokenExpiresAt })
+  iamDebugLog('createIamSession', 'iam session created', { instanceId, email: data.email, appId: data.appId, expiresAt: data.accessTokenExpiresAt })
   return session
 }
 
-export async function getIamSession(event: H3Event): Promise<Session | null> {
-  const id = getCookie(event, SESSION_COOKIE)
+export async function setIamSessionMetadata(event: H3Event, instanceId: string, metadata: Record<string, unknown>): Promise<void> {
+  const id = getCookie(event, sessionCookieName(instanceId))
+  if (!id) return
+  const storage = useStorage(sessionStorageNamespace(instanceId))
+  const session = (await storage.getItem(id)) as Session | null
+  if (!session) return
+  session.metadata = { ...session.metadata, ...metadata }
+  await storage.setItem(id, session)
+}
+
+export async function getIamSession(event: H3Event, instanceId: string): Promise<Session | null> {
+  const id = getCookie(event, sessionCookieName(instanceId))
   if (!id) {
-    iamDebugLog('getIamSession', 'no session cookie present')
+    iamDebugLog('getIamSession', 'no session cookie present', { instanceId })
     return null
   }
 
-  const storage = useStorage(STORAGE_KEY)
+  const storage = useStorage(sessionStorageNamespace(instanceId))
   const session = (await storage.getItem(id)) as Session | null
   if (!session) {
-    iamDebugLog('getIamSession', 'session cookie present but no matching session in storage')
+    iamDebugLog('getIamSession', 'session cookie present but no matching session in storage', { instanceId })
     return null
   }
 
   if (Date.now() >= session.accessTokenExpiresAt) {
-    iamDebugLog('getIamSession', 'access token expired, attempting refresh', { email: session.email })
+    iamDebugLog('getIamSession', 'access token expired, attempting refresh', { instanceId, email: session.email })
     try {
-      const refreshed = await refreshAccessToken(event, session.refreshToken)
+      const credentials = await resolveIamCredentials(event, instanceId)
+      if (!credentials) throw new Error('no credentials resolved for refresh')
+      const refreshed = await refreshAccessToken(credentials, session.refreshToken)
       session.accessToken = refreshed.token
       session.refreshToken = refreshed.refresh_token
       session.accessTokenExpiresAt = Date.now() + refreshed.expires_in * 1000
       await storage.setItem(id, session)
-      iamDebugLog('getIamSession', 'access token refreshed', { email: session.email })
+      iamDebugLog('getIamSession', 'access token refreshed', { instanceId, email: session.email })
     } catch {
-      iamDebugLog('getIamSession', 'refresh failed, destroying session', { email: session.email })
-      await destroyIamSession(event)
+      iamDebugLog('getIamSession', 'refresh failed, destroying session', { instanceId, email: session.email })
+      await destroyIamSession(event, instanceId)
       return null
     }
   }
@@ -202,11 +248,11 @@ export async function getIamSession(event: H3Event): Promise<Session | null> {
   return session
 }
 
-export async function destroyIamSession(event: H3Event) {
-  const id = getCookie(event, SESSION_COOKIE)
-  if (id) await useStorage(STORAGE_KEY).removeItem(id)
-  deleteCookie(event, SESSION_COOKIE)
-  iamDebugLog('destroyIamSession', 'session destroyed', { hadSession: Boolean(id) })
+export async function destroyIamSession(event: H3Event, instanceId: string) {
+  const id = getCookie(event, sessionCookieName(instanceId))
+  if (id) await useStorage(sessionStorageNamespace(instanceId)).removeItem(id)
+  deleteCookie(event, sessionCookieName(instanceId))
+  iamDebugLog('destroyIamSession', 'session destroyed', { instanceId, hadSession: Boolean(id) })
 }
 
 export function audienceMatches(aud: string | string[], appId: string): boolean {
