@@ -114,6 +114,7 @@ export default defineNuxtModule<ModuleOptions>({
     const wrapperFor = (name: string, handlerPath: string) => {
       const template = addTemplate({
         filename: `iam-client-${options.instanceId}-${name}.mjs`,
+        write: true,
         getContents: () =>
           `import handler from ${JSON.stringify(resolver.resolve(handlerPath))}\n`
           + `export default (event) => { event.context.iamInstanceId = ${JSON.stringify(options.instanceId)}; return handler(event) }\n`,
@@ -144,6 +145,7 @@ export default defineNuxtModule<ModuleOptions>({
     const composableAlias = options.composableAlias ?? 'useAuth'
     const composableTemplate = addTemplate({
       filename: `iam-client-${options.instanceId}-composable.mjs`,
+      write: true,
       getContents: () =>
         `import { useAuthImpl } from ${JSON.stringify(resolver.resolve('./runtime/composables/useAuth'))}\n`
         + `export function ${composableAlias}() { return useAuthImpl(${JSON.stringify(options.instanceId)}) }\n`,
