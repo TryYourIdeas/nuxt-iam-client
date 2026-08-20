@@ -11,8 +11,12 @@ Extracted from `TestIam` so other Nuxt apps in `web/` can adopt the same
 - Server middleware that handles the `?code=&state=` OAuth callback: state/nonce
   validation, code exchange, `id_token` claim checks (`nonce`/`aud`/`exp`),
   session creation.
-- Session storage (Nitro `useStorage`, in-memory by default) with transparent
-  refresh-token rotation.
+- Session storage in a Postgres table the module manages itself
+  (`iam_client_sessions`, connected via `DATABASE_URL` — its own migration runs
+  automatically on first request, same as any other app-level Drizzle
+  migration in this workspace) with transparent refresh-token rotation.
+  Sessions from every mount in the same app (e.g. two `instanceId`s) share one
+  physical table, distinguished by an `instance_id` column.
 - `useAuth()` composable (auto-imported) — `user`, `status`, `fetchSession()`,
   `logout()`.
 
