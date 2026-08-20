@@ -1,6 +1,7 @@
-import { describe, expect, it, vi, afterEach } from 'vitest'
+import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 import { audienceMatches, decodeJwtPayload } from '../src/runtime/server/utils/auth'
-import { attemptCookieName, sessionCookieName, sessionStorageNamespace, resolveIamCredentials } from '../src/runtime/server/utils/auth'
+import { attemptCookieName, sessionCookieName, resolveIamCredentials } from '../src/runtime/server/utils/auth'
+import { createIamSession, getIamSession, setIamSessionMetadata, destroyIamSession } from '../src/runtime/server/utils/auth'
 
 describe('decodeJwtPayload', () => {
   it('decodes the base64url payload segment', () => {
@@ -35,11 +36,6 @@ describe('instance-scoped naming', () => {
     expect(sessionCookieName('admin')).toBe('iam_session_admin')
     expect(sessionCookieName('tenant')).toBe('iam_session_tenant')
   })
-
-  it('derives distinct storage namespaces per instanceId', () => {
-    expect(sessionStorageNamespace('admin')).toBe('iam:sessions:admin')
-    expect(sessionStorageNamespace('tenant')).toBe('iam:sessions:tenant')
-  })
 })
 
 describe('resolveIamCredentials', () => {
@@ -71,5 +67,82 @@ describe('resolveIamCredentials', () => {
     vi.stubGlobal('useRuntimeConfig', () => ({ iamClientInstances: {} }))
 
     await expect(resolveIamCredentials({} as never, 'unknown')).rejects.toThrow('unknown instanceId "unknown"')
+  })
+})
+
+function fakeEvent(cookies: Record<string, string> = {}) {
+  const store = { ...cookies }
+  const resHeaders = new Map<string, string>()
+  return {
+    node: {
+      req: { headers: { cookie: Object.entries(store).map(([k, v]) => `${k}=${v}`).join('; ') } },
+      res: {
+        getHeader: (name: string) => resHeaders.get(name),
+        setHeader: (name: string, value: string) => resHeaders.set(name, value),
+        removeHeader: (name: string) => resHeaders.delete(name),
+      },
+    },
+  } as any
+}
+
+// These tests hit a real local Postgres (set DATABASE_URL before running) -
+// there is no mock-based path here, since the whole point is verifying real
+// persistence across the create/get/destroy round trip.
+describe('session persistence', () => {
+  beforeEach(() => {
+    vi.stubGlobal('iamDebugLog', vi.fn())
+  })
+
+  it('round-trips a session through create -> get -> destroy', async () => {
+    const event = fakeEvent()
+    const created = await createIamSession(event, 'test-instance', {
+      username: 'sub-1',
+      email: 'a@b.com',
+      accessToken: 'at',
+      refreshToken: 'rt',
+      accessTokenExpiresAt: Date.now() + 60_000,
+      appId: 'app-1',
+    })
+    expect(created.id).toBeTruthy()
+
+    const getEvent = fakeEvent({ [`iam_session_test-instance`]: created.id })
+    const fetched = await getIamSession(getEvent, 'test-instance')
+    expect(fetched?.email).toBe('a@b.com')
+
+    await destroyIamSession(getEvent, 'test-instance')
+    const afterDestroy = await getIamSession(getEvent, 'test-instance')
+    expect(afterDestroy).toBeNull()
+  })
+
+  it('keeps sessions isolated by instanceId', async () => {
+    const event = fakeEvent()
+    const created = await createIamSession(event, 'instance-a', {
+      username: 'sub-2',
+      email: 'iso@b.com',
+      accessToken: 'at',
+      refreshToken: 'rt',
+      accessTokenExpiresAt: Date.now() + 60_000,
+      appId: 'app-1',
+    })
+
+    const wrongInstanceEvent = fakeEvent({ [`iam_session_instance-b`]: created.id })
+    expect(await getIamSession(wrongInstanceEvent, 'instance-b')).toBeNull()
+  })
+
+  it('merges metadata via setIamSessionMetadata', async () => {
+    const event = fakeEvent()
+    const created = await createIamSession(event, 'meta-instance', {
+      username: 'sub-3',
+      email: 'meta@b.com',
+      accessToken: 'at',
+      refreshToken: 'rt',
+      accessTokenExpiresAt: Date.now() + 60_000,
+      appId: 'app-1',
+    })
+
+    const sessionEvent = fakeEvent({ [`iam_session_meta-instance`]: created.id })
+    await setIamSessionMetadata(sessionEvent, 'meta-instance', { tenantUserId: 'u1' })
+    const fetched = await getIamSession(sessionEvent, 'meta-instance')
+    expect(fetched?.metadata).toEqual({ tenantUserId: 'u1' })
   })
 })

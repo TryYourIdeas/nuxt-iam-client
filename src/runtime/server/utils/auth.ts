@@ -1,6 +1,9 @@
 import { randomBytes } from 'node:crypto'
 import type { H3Event } from 'h3'
 import { getCookie, setCookie, deleteCookie } from 'h3'
+import { and, eq } from 'drizzle-orm'
+import { getSessionsDb } from '../db/client'
+import { iamClientSessions, type IamClientSessionRow } from '../db/schema'
 
 export interface AuthAttempt {
   state: string
@@ -67,10 +70,6 @@ export function attemptCookieName(instanceId: string): string {
 
 export function sessionCookieName(instanceId: string): string {
   return `iam_session_${instanceId}`
-}
-
-export function sessionStorageNamespace(instanceId: string): string {
-  return `iam:sessions:${instanceId}`
 }
 
 export function generateAttempt(): AuthAttempt {
@@ -189,20 +188,43 @@ export async function refreshAccessToken(credentials: IamCredentials, refreshTok
   return (await response.json()) as RefreshResponse
 }
 
+function rowToSession(row: IamClientSessionRow): Session {
+  return {
+    id: row.id,
+    username: row.username,
+    email: row.email,
+    accessToken: row.accessToken,
+    refreshToken: row.refreshToken,
+    accessTokenExpiresAt: row.accessTokenExpiresAt,
+    appId: row.appId,
+    metadata: row.metadata ?? undefined,
+  }
+}
+
 export async function createIamSession(
   event: H3Event,
   instanceId: string,
   data: Omit<Session, 'id'>,
 ): Promise<Session> {
   const id = randomBytes(32).toString('base64url')
-  const session: Session = { id, ...data }
-  await useStorage(sessionStorageNamespace(instanceId)).setItem(id, session)
+  await getSessionsDb().insert(iamClientSessions).values({
+    id,
+    instanceId,
+    username: data.username,
+    email: data.email,
+    accessToken: data.accessToken,
+    refreshToken: data.refreshToken,
+    accessTokenExpiresAt: data.accessTokenExpiresAt,
+    appId: data.appId,
+    metadata: data.metadata ?? null,
+  })
   setCookie(event, sessionCookieName(instanceId), id, {
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
     path: '/',
   })
+  const session: Session = { id, ...data }
   iamDebugLog('createIamSession', 'iam session created', { instanceId, email: data.email, appId: data.appId, expiresAt: data.accessTokenExpiresAt })
   return session
 }
@@ -210,11 +232,15 @@ export async function createIamSession(
 export async function setIamSessionMetadata(event: H3Event, instanceId: string, metadata: Record<string, unknown>): Promise<void> {
   const id = getCookie(event, sessionCookieName(instanceId))
   if (!id) return
-  const storage = useStorage(sessionStorageNamespace(instanceId))
-  const session = (await storage.getItem(id)) as Session | null
-  if (!session) return
-  session.metadata = { ...session.metadata, ...metadata }
-  await storage.setItem(id, session)
+  const db = getSessionsDb()
+  const [row] = await db
+    .select()
+    .from(iamClientSessions)
+    .where(and(eq(iamClientSessions.id, id), eq(iamClientSessions.instanceId, instanceId)))
+    .limit(1)
+  if (!row) return
+  const merged = { ...(row.metadata ?? {}), ...metadata }
+  await db.update(iamClientSessions).set({ metadata: merged }).where(eq(iamClientSessions.id, id))
 }
 
 export async function getIamSession(event: H3Event, instanceId: string): Promise<Session | null> {
@@ -224,12 +250,18 @@ export async function getIamSession(event: H3Event, instanceId: string): Promise
     return null
   }
 
-  const storage = useStorage(sessionStorageNamespace(instanceId))
-  const session = (await storage.getItem(id)) as Session | null
-  if (!session) {
+  const db = getSessionsDb()
+  const [row] = await db
+    .select()
+    .from(iamClientSessions)
+    .where(and(eq(iamClientSessions.id, id), eq(iamClientSessions.instanceId, instanceId)))
+    .limit(1)
+  if (!row) {
     iamDebugLog('getIamSession', 'session cookie present but no matching session in storage', { instanceId })
     return null
   }
+
+  const session = rowToSession(row)
 
   if (Date.now() >= session.accessTokenExpiresAt) {
     iamDebugLog('getIamSession', 'access token expired, attempting refresh', { instanceId, email: session.email })
@@ -240,7 +272,14 @@ export async function getIamSession(event: H3Event, instanceId: string): Promise
       session.accessToken = refreshed.token
       session.refreshToken = refreshed.refresh_token
       session.accessTokenExpiresAt = Date.now() + refreshed.expires_in * 1000
-      await storage.setItem(id, session)
+      await db
+        .update(iamClientSessions)
+        .set({
+          accessToken: session.accessToken,
+          refreshToken: session.refreshToken,
+          accessTokenExpiresAt: session.accessTokenExpiresAt,
+        })
+        .where(eq(iamClientSessions.id, id))
       iamDebugLog('getIamSession', 'access token refreshed', { instanceId, email: session.email })
     } catch {
       iamDebugLog('getIamSession', 'refresh failed, destroying session', { instanceId, email: session.email })
@@ -254,7 +293,9 @@ export async function getIamSession(event: H3Event, instanceId: string): Promise
 
 export async function destroyIamSession(event: H3Event, instanceId: string) {
   const id = getCookie(event, sessionCookieName(instanceId))
-  if (id) await useStorage(sessionStorageNamespace(instanceId)).removeItem(id)
+  if (id) {
+    await getSessionsDb().delete(iamClientSessions).where(and(eq(iamClientSessions.id, id), eq(iamClientSessions.instanceId, instanceId)))
+  }
   deleteCookie(event, sessionCookieName(instanceId))
   iamDebugLog('destroyIamSession', 'session destroyed', { instanceId, hadSession: Boolean(id) })
 }
