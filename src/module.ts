@@ -1,4 +1,4 @@
-import { addImports, addServerHandler, addServerImportsDir, addTemplate, createResolver, defineNuxtModule } from '@nuxt/kit'
+import { addImports, addServerHandler, addServerImportsDir, addServerPlugin, addTemplate, createResolver, defineNuxtModule } from '@nuxt/kit'
 import { defu } from 'defu'
 import { iamDebugLog } from './runtime/server/utils/iamDebugLog'
 
@@ -123,6 +123,25 @@ export default defineNuxtModule<ModuleOptions>({
     })
 
     addServerImportsDir(resolver.resolve('./runtime/server/utils'))
+
+    // Session-store migrations + boot plugin: registered once per app even
+    // if this module is mounted more than once (e.g. home's admin + tenant
+    // instances share one physical iam_client_sessions table) - a second
+    // setup() call for a second mount must not re-push the same serverAsset
+    // or re-register the same Nitro plugin.
+    const nitroOptions = (nuxt.options as unknown as { nitro: Record<string, any> }).nitro || {}
+    nitroOptions.serverAssets = nitroOptions.serverAssets || []
+    ;(nuxt.options as unknown as { nitro: Record<string, any> }).nitro = nitroOptions
+    const alreadyRegistered = nitroOptions.serverAssets.some(
+      (asset: { baseName: string }) => asset.baseName === 'nuxtIamClientMigrations',
+    )
+    if (!alreadyRegistered) {
+      nitroOptions.serverAssets.push({
+        baseName: 'nuxtIamClientMigrations',
+        dir: resolver.resolve('./runtime/server/db/migrations'),
+      })
+      addServerPlugin(resolver.resolve('./runtime/server/plugins/migrate'))
+    }
 
     // Per-mount wrappers: each sets event.context.iamInstanceId to this
     // mount's fixed instanceId before delegating to the shared handler, so
