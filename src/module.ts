@@ -56,141 +56,160 @@ export interface ModuleOptions {
   composableAlias?: string
 }
 
-export default defineNuxtModule<ModuleOptions>({
+// Applied manually per instance inside setup(), not via defineNuxtModule's
+// own `defaults` field - that field is merged with inline options by Nuxt
+// itself *before* setup() runs, and that merge's behavior when the inline
+// value is an array (the multi-instance case below) isn't something to
+// rely on. Doing it manually here works identically for both the
+// single-object and array cases.
+const INSTANCE_DEFAULTS: Partial<ModuleOptions> = {
+  instanceId: 'default',
+  authenticatedPath: '/authenticated',
+  afterLoginPath: '/dashboard',
+  notAuthenticatedPath: '/not-authenticated',
+  afterLogoutPath: '/',
+  routePrefix: '/api/auth',
+  composableAlias: 'useAuth',
+}
+
+export default defineNuxtModule<ModuleOptions | ModuleOptions[]>({
   meta: {
     name: 'nuxt-iam-client',
     configKey: 'iamClient',
   },
-  defaults: {
-    instanceId: 'default',
-    authenticatedPath: '/authenticated',
-    afterLoginPath: '/dashboard',
-    notAuthenticatedPath: '/not-authenticated',
-    afterLogoutPath: '/',
-    routePrefix: '/api/auth',
-    composableAlias: 'useAuth',
-  } as ModuleOptions,
-  setup(options, nuxt) {
+  setup(rawOptions, nuxt) {
     const resolver = createResolver(import.meta.url)
 
-    if (!options.instanceId) {
-      throw new Error('nuxt-iam-client: `instanceId` module option is required')
-    }
-    if (!options.dynamic && !options.iam) {
-      throw new Error(`nuxt-iam-client: instance "${options.instanceId}" needs \`iam\` credentials unless \`dynamic: true\``)
-    }
-
-    const runtimeConfig = nuxt.options.runtimeConfig as Record<string, any>
-    runtimeConfig.iamClientInstances = runtimeConfig.iamClientInstances || {}
-    runtimeConfig.iamClientInstances[options.instanceId] = {
-      dynamic: Boolean(options.dynamic),
-    }
-
-    if (!options.dynamic) {
-      // Static credentials are kept at the *original*, unprefixed
-      // `runtimeConfig.iam` path (not nested under iamClientInstances) so
-      // Nitro's env-override still maps it to NUXT_IAM_URL/NUXT_IAM_APP_ID/
-      // NUXT_IAM_CLIENT_SECRET at server startup - Nitro derives the
-      // override env var name from the exact runtimeConfig path a value
-      // lives at, so nesting it under a per-instanceId key (as an earlier
-      // version of this module did) silently renamed the expected env var
-      // to NUXT_IAM_CLIENT_INSTANCES_<INSTANCEID>_IAM_URL, which nothing
-      // sets - the app then falls back to whatever NUXT_IAM_URL happened to
-      // be on the machine that ran `nuxt build`, forever, regardless of
-      // what the deployed server's real environment says. Only one static
-      // instance can rely on this (today: admin) - a second static mount
-      // would collide on this same key; dynamic instances (tenant) don't
-      // need it, since they resolve credentials from the DB per request.
-      runtimeConfig.iam = defu(runtimeConfig.iam, options.iam)
-    }
-
-    iamDebugLog('module setup', 'registered iam-client instance at build time (pre runtime-env override)', {
-      instanceId: options.instanceId,
-      dynamic: Boolean(options.dynamic),
-      url: options.iam?.url,
-      appId: options.iam?.appId,
-    })
-
-    const routePrefix = options.routePrefix ?? '/api/auth'
-
-    runtimeConfig.public.iamClient = runtimeConfig.public.iamClient || {}
-    runtimeConfig.public.iamClient[options.instanceId] = defu(runtimeConfig.public.iamClient[options.instanceId], {
-      authenticatedPath: options.authenticatedPath,
-      afterLoginPath: options.afterLoginPath,
-      notAuthenticatedPath: options.notAuthenticatedPath,
-      afterLogoutPath: options.afterLogoutPath,
-      routePrefix,
-    })
+    // Nuxt dedupes `modules` array entries by this module's static
+    // meta.name, so a second `['nuxt-iam-client', {...}]` entry for a
+    // second instance is silently dropped no matter what options it
+    // carries - setup() only ever runs once per app. Accepting an array
+    // here lets a consumer mount multiple instances (e.g. admin + tenant)
+    // through that single entry instead, so there's nothing left to dedupe.
+    const instancesInput = Array.isArray(rawOptions) ? rawOptions : [rawOptions]
 
     addServerImportsDir(resolver.resolve('./runtime/server/utils'))
 
-    // Session-store migrations + boot plugin: registered once per app even
-    // if this module is mounted more than once (e.g. home's admin + tenant
-    // instances share one physical iam_client_sessions table) - a second
-    // setup() call for a second mount must not re-push the same serverAsset
-    // or re-register the same Nitro plugin.
-    const nitroOptions = (nuxt.options as unknown as { nitro: Record<string, any> }).nitro || {}
-    nitroOptions.serverAssets = nitroOptions.serverAssets || []
-    ;(nuxt.options as unknown as { nitro: Record<string, any> }).nitro = nitroOptions
-    const alreadyRegistered = nitroOptions.serverAssets.some(
-      (asset: { baseName: string }) => asset.baseName === 'nuxtIamClientMigrations',
-    )
-    if (!alreadyRegistered) {
-      nitroOptions.serverAssets.push({
-        baseName: 'nuxtIamClientMigrations',
-        dir: resolver.resolve('./runtime/server/db/migrations'),
-      })
-      addServerPlugin(resolver.resolve('./runtime/server/plugins/migrate'))
-    }
+    for (const instanceInput of instancesInput) {
+      const options = defu(instanceInput, INSTANCE_DEFAULTS) as ModuleOptions
 
-    // Per-mount wrappers: each sets event.context.iamInstanceId to this
-    // mount's fixed instanceId before delegating to the shared handler, so
-    // the same compiled handler file can be registered at multiple routes
-    // (one per mount) and still know which mount it's running for.
-    const wrapperFor = (name: string, handlerPath: string) => {
-      const template = addTemplate({
-        filename: `iam-client-${options.instanceId}-${name}.mjs`,
+      if (!options.instanceId) {
+        throw new Error('nuxt-iam-client: `instanceId` module option is required')
+      }
+      if (!options.dynamic && !options.iam) {
+        throw new Error(`nuxt-iam-client: instance "${options.instanceId}" needs \`iam\` credentials unless \`dynamic: true\``)
+      }
+
+      const runtimeConfig = nuxt.options.runtimeConfig as Record<string, any>
+      runtimeConfig.iamClientInstances = runtimeConfig.iamClientInstances || {}
+      runtimeConfig.iamClientInstances[options.instanceId] = {
+        dynamic: Boolean(options.dynamic),
+      }
+
+      if (!options.dynamic) {
+        // Static credentials are kept at the *original*, unprefixed
+        // `runtimeConfig.iam` path (not nested under iamClientInstances) so
+        // Nitro's env-override still maps it to NUXT_IAM_URL/NUXT_IAM_APP_ID/
+        // NUXT_IAM_CLIENT_SECRET at server startup - Nitro derives the
+        // override env var name from the exact runtimeConfig path a value
+        // lives at, so nesting it under a per-instanceId key (as an earlier
+        // version of this module did) silently renamed the expected env var
+        // to NUXT_IAM_CLIENT_INSTANCES_<INSTANCEID>_IAM_URL, which nothing
+        // sets - the app then falls back to whatever NUXT_IAM_URL happened to
+        // be on the machine that ran `nuxt build`, forever, regardless of
+        // what the deployed server's real environment says. Only one static
+        // instance can rely on this (today: admin) - a second static mount
+        // would collide on this same key; dynamic instances (tenant) don't
+        // need it, since they resolve credentials from the DB per request.
+        runtimeConfig.iam = defu(runtimeConfig.iam, options.iam)
+      }
+
+      iamDebugLog('module setup', 'registered iam-client instance at build time (pre runtime-env override)', {
+        instanceId: options.instanceId,
+        dynamic: Boolean(options.dynamic),
+        url: options.iam?.url,
+        appId: options.iam?.appId,
+      })
+
+      const routePrefix = options.routePrefix ?? '/api/auth'
+
+      runtimeConfig.public.iamClient = runtimeConfig.public.iamClient || {}
+      runtimeConfig.public.iamClient[options.instanceId] = defu(runtimeConfig.public.iamClient[options.instanceId], {
+        authenticatedPath: options.authenticatedPath,
+        afterLoginPath: options.afterLoginPath,
+        notAuthenticatedPath: options.notAuthenticatedPath,
+        afterLogoutPath: options.afterLogoutPath,
+        routePrefix,
+      })
+
+      // Session-store migrations + boot plugin: registered once per app even
+      // though this loop may run once per instance (e.g. home's admin + tenant
+      // instances share one physical iam_client_sessions table) - a second
+      // iteration must not re-push the same serverAsset or re-register the
+      // same Nitro plugin.
+      const nitroOptions = (nuxt.options as unknown as { nitro: Record<string, any> }).nitro || {}
+      nitroOptions.serverAssets = nitroOptions.serverAssets || []
+      ;(nuxt.options as unknown as { nitro: Record<string, any> }).nitro = nitroOptions
+      const alreadyRegistered = nitroOptions.serverAssets.some(
+        (asset: { baseName: string }) => asset.baseName === 'nuxtIamClientMigrations',
+      )
+      if (!alreadyRegistered) {
+        nitroOptions.serverAssets.push({
+          baseName: 'nuxtIamClientMigrations',
+          dir: resolver.resolve('./runtime/server/db/migrations'),
+        })
+        addServerPlugin(resolver.resolve('./runtime/server/plugins/migrate'))
+      }
+
+      // Per-mount wrappers: each sets event.context.iamInstanceId to this
+      // mount's fixed instanceId before delegating to the shared handler, so
+      // the same compiled handler file can be registered at multiple routes
+      // (one per mount) and still know which mount it's running for.
+      const wrapperFor = (name: string, handlerPath: string) => {
+        const template = addTemplate({
+          filename: `iam-client-${options.instanceId}-${name}.mjs`,
+          write: true,
+          getContents: () =>
+            `import handler from ${JSON.stringify(resolver.resolve(handlerPath))}\n`
+            + `export default (event) => { event.context.iamInstanceId = ${JSON.stringify(options.instanceId)}; return handler(event) }\n`,
+        })
+        return template.dst
+      }
+
+      addServerHandler({
+        middleware: true,
+        handler: wrapperFor('middleware', './runtime/server/middleware/auth'),
+      })
+      addServerHandler({
+        route: `${routePrefix}/login`,
+        method: 'get',
+        handler: wrapperFor('login', './runtime/server/api/auth/login.get'),
+      })
+      addServerHandler({
+        route: `${routePrefix}/logout`,
+        method: 'post',
+        handler: wrapperFor('logout', './runtime/server/api/auth/logout.post'),
+      })
+      addServerHandler({
+        route: `${routePrefix}/session`,
+        method: 'get',
+        handler: wrapperFor('session', './runtime/server/api/auth/session.get'),
+      })
+
+      const composableAlias = options.composableAlias ?? 'useAuth'
+      const composableTemplate = addTemplate({
+        filename: `iam-client-${options.instanceId}-composable.mjs`,
         write: true,
         getContents: () =>
-          `import handler from ${JSON.stringify(resolver.resolve(handlerPath))}\n`
-          + `export default (event) => { event.context.iamInstanceId = ${JSON.stringify(options.instanceId)}; return handler(event) }\n`,
+          `import { useAuthImpl } from ${JSON.stringify(resolver.resolve('./runtime/composables/useAuth'))}\n`
+          + `export function ${composableAlias}() { return useAuthImpl(${JSON.stringify(options.instanceId)}) }\n`,
       })
-      return template.dst
+
+      addImports({
+        name: composableAlias,
+        as: composableAlias,
+        from: composableTemplate.dst,
+      })
     }
-
-    addServerHandler({
-      middleware: true,
-      handler: wrapperFor('middleware', './runtime/server/middleware/auth'),
-    })
-    addServerHandler({
-      route: `${routePrefix}/login`,
-      method: 'get',
-      handler: wrapperFor('login', './runtime/server/api/auth/login.get'),
-    })
-    addServerHandler({
-      route: `${routePrefix}/logout`,
-      method: 'post',
-      handler: wrapperFor('logout', './runtime/server/api/auth/logout.post'),
-    })
-    addServerHandler({
-      route: `${routePrefix}/session`,
-      method: 'get',
-      handler: wrapperFor('session', './runtime/server/api/auth/session.get'),
-    })
-
-    const composableAlias = options.composableAlias ?? 'useAuth'
-    const composableTemplate = addTemplate({
-      filename: `iam-client-${options.instanceId}-composable.mjs`,
-      write: true,
-      getContents: () =>
-        `import { useAuthImpl } from ${JSON.stringify(resolver.resolve('./runtime/composables/useAuth'))}\n`
-        + `export function ${composableAlias}() { return useAuthImpl(${JSON.stringify(options.instanceId)}) }\n`,
-    })
-
-    addImports({
-      name: composableAlias,
-      as: composableAlias,
-      from: composableTemplate.dst,
-    })
   },
 })
