@@ -27,20 +27,32 @@ most once total, no matter how many array entries reference it.
 
 ## Decision
 
-### 1. Accept an array of instance configs in one module registration
+### 1. Accept a `{ instances: [...] }` options shape in one module registration
 
 `setup(options, nuxt)` now accepts either a single `ModuleOptions` object
-(today's shape, for single-mount consumers) **or** an array of them (new,
-for multi-mount consumers). It normalizes with
-`const instances = Array.isArray(options) ? options : [options]`, applies
-defaults to each entry manually via `defu(entry, INSTANCE_DEFAULTS)` (see
-Decision 2 for why manually, not via `defineNuxtModule`'s own `defaults`
-field), then runs the existing per-instance setup logic — the `if
-(!options.instanceId) throw`, the routes, the composable, the runtime
-config — once per entry, all within this single `setup()` call. Since
-Nuxt's array-level dedup only ever sees **one** `modules` array entry for
-this module (regardless of how many instances are inside it), there is
-nothing left for it to collide with.
+(today's shape, for single-mount consumers) **or** a
+`{ instances: ModuleOptions[] }` wrapper object (new, for multi-mount
+consumers) — **not** a bare array. A bare array was the original plan
+(and this repo's first attempt), but it doesn't survive Nuxt's own
+options-merge step: `getOptions()` runs `defu(inlineOptions, ..., {})` on
+whatever is passed *before* `setup()` ever sees it, and `defu` collapses a
+bare array merged against a plain object down to `{}` — verified directly
+(`defu([{a: 1}], undefined, {})` returns `{}`). A plain
+`{ instances: [...] }` object survives that same merge with the array
+intact, since the array is just an ordinary property value at that point,
+not the thing being merged.
+
+`setup()` detects the shape via `Array.isArray(options.instances)`,
+normalizes to `const instancesInput = isMultiInstance(rawOptions) ?
+rawOptions.instances : [rawOptions]`, applies defaults to each entry
+manually via `defu(entry, INSTANCE_DEFAULTS)` (see Decision 2 for why
+manually, not via `defineNuxtModule`'s own `defaults` field), then runs
+the existing per-instance setup logic — the `if (!options.instanceId)
+throw`, the routes, the composable, the runtime config — once per entry,
+all within this single `setup()` call. Since Nuxt's array-level dedup only
+ever sees **one** `modules` array entry for this module (regardless of how
+many instances are inside it), there is nothing left for it to collide
+with.
 
 The idempotency guard around the shared session-store migration asset
 (`nitroOptions.serverAssets`) stays — it's now what prevents that one
@@ -82,10 +94,12 @@ modules: [
 
 // After:
 modules: [
-  ['nuxt-iam-client', [
-    { instanceId: 'admin', ... },
-    { instanceId: 'tenant', ... },
-  ]],
+  ['nuxt-iam-client', {
+    instances: [
+      { instanceId: 'admin', ... },
+      { instanceId: 'tenant', ... },
+    ],
+  }],
 ]
 ```
 
@@ -104,6 +118,3 @@ longer throws `useTenantAuth is not defined`.
 - Changing how `agent-builder` or any other future consumer would mount
   multiple instances — this fix makes that possible but doesn't add a
   second consumer of the pattern.
-- A `{ instances: [...] }` wrapper-object shape was considered and
-  rejected in favor of a bare array — confirmed with the user, no
-  functional difference, bare array is simpler.
