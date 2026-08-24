@@ -72,7 +72,15 @@ const INSTANCE_DEFAULTS: Partial<ModuleOptions> = {
   composableAlias: 'useAuth',
 }
 
-export default defineNuxtModule<ModuleOptions | ModuleOptions[]>({
+export interface MultiInstanceModuleOptions {
+  instances: ModuleOptions[]
+}
+
+function isMultiInstance(options: ModuleOptions | MultiInstanceModuleOptions): options is MultiInstanceModuleOptions {
+  return Array.isArray((options as MultiInstanceModuleOptions).instances)
+}
+
+export default defineNuxtModule<ModuleOptions | MultiInstanceModuleOptions>({
   meta: {
     name: 'nuxt-iam-client',
     configKey: 'iamClient',
@@ -83,10 +91,18 @@ export default defineNuxtModule<ModuleOptions | ModuleOptions[]>({
     // Nuxt dedupes `modules` array entries by this module's static
     // meta.name, so a second `['nuxt-iam-client', {...}]` entry for a
     // second instance is silently dropped no matter what options it
-    // carries - setup() only ever runs once per app. Accepting an array
-    // here lets a consumer mount multiple instances (e.g. admin + tenant)
-    // through that single entry instead, so there's nothing left to dedupe.
-    const instancesInput = Array.isArray(rawOptions) ? rawOptions : [rawOptions]
+    // carries - setup() only ever runs once per app. Accepting a
+    // `{ instances: [...] }` options shape here lets a consumer mount
+    // multiple instances (e.g. admin + tenant) through that single entry
+    // instead, so there's nothing left to dedupe.
+    //
+    // This must be an object with an `instances` array property, not a
+    // bare array passed directly as the module's inline options - Nuxt's
+    // own options-merge step runs `defu(inlineOptions, ..., {})` on
+    // whatever is passed *before* setup() ever sees it, and defu collapses
+    // a bare array merged against a plain object down to `{}`, silently
+    // destroying it. A plain object survives that merge untouched.
+    const instancesInput = isMultiInstance(rawOptions) ? rawOptions.instances : [rawOptions]
 
     addServerImportsDir(resolver.resolve('./runtime/server/utils'))
 
