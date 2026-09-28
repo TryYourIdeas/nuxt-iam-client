@@ -47,12 +47,12 @@ describe('resolveIamCredentials', () => {
     // Regression test: an earlier version of this module captured
     // options.iam into runtimeConfig.iamClientInstances[instanceId].iam at
     // build time, which broke Nitro's NUXT_IAM_URL/NUXT_IAM_APP_ID/
-    // NUXT_IAM_CLIENT_SECRET runtime env-var override (Nitro only
+    // NUXT_IAM_APP_SECRET runtime env-var override (Nitro only
     // overrides the exact path a value was registered at). This asserts
     // resolveIamCredentials reflects whatever runtimeConfig.iam holds *at
     // call time*, simulating a runtime override having changed it after
     // module setup ran.
-    const runtimeIam = { url: 'https://iam.example.com', appId: 'runtime-app-id', clientSecret: 'runtime-secret' }
+    const runtimeIam = { url: 'https://iam.example.com', appId: 'runtime-app-id', appSecret: 'runtime-secret' }
     vi.stubGlobal('useRuntimeConfig', () => ({
       iamClientInstances: { admin: { dynamic: false } },
       iam: runtimeIam,

@@ -8,7 +8,7 @@ export interface IamCredentials {
   /** app_id registered with iam for this app/environment */
   appId: string
   /** client_secret printed once when the app was registered with iam */
-  clientSecret: string
+  appSecret: string
 }
 
 export interface ModuleOptions {
@@ -126,7 +126,7 @@ export default defineNuxtModule<ModuleOptions | MultiInstanceModuleOptions>({
         // Static credentials are kept at the *original*, unprefixed
         // `runtimeConfig.iam` path (not nested under iamClientInstances) so
         // Nitro's env-override still maps it to NUXT_IAM_URL/NUXT_IAM_APP_ID/
-        // NUXT_IAM_CLIENT_SECRET at server startup - Nitro derives the
+        // NUXT_IAM_APP_SECRET at server startup - Nitro derives the
         // override env var name from the exact runtimeConfig path a value
         // lives at, so nesting it under a per-instanceId key (as an earlier
         // version of this module did) silently renamed the expected env var
