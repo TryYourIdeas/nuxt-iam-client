@@ -1,7 +1,7 @@
 # Features
 
 `nuxt-iam-client` is a Nuxt module implementing the client side of `iam`'s
-SSO flow (see `web/iam/IAM_CLIENT_IMPLEMENTATION.md` for the protocol it
+SSO flow (see `web/iam/docs/user-guides/IAM_CLIENT_IMPLEMENTATION.md` for the protocol it
 implements). It was extracted from `TestIam` so other Nuxt apps in `web/`
 can adopt the same `iam` integration without re-implementing it.
 
