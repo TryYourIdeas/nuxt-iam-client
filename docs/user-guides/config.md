@@ -26,7 +26,7 @@ export default defineNuxtConfig({
     iam: {
       url: '', // NUXT_IAM_URL
       appId: '', // NUXT_IAM_APP_ID
-      clientSecret: '', // NUXT_IAM_CLIENT_SECRET
+      appSecret: '', // NUXT_IAM_APP_SECRET
     },
   },
 })
@@ -37,7 +37,7 @@ export default defineNuxtConfig({
 | Option | Required | Default | Notes |
 |---|---|---|---|
 | `instanceId` | No | `'default'` | Distinguishes this mount's cookies, storage namespace, and runtime config entry from any other mount in the same app. Set it explicitly once a second mount exists. |
-| `iam` | Yes, unless `dynamic: true` | — | `{ url, appId, clientSecret }` — the `iam` instance and app registration this mount authenticates against. |
+| `iam` | Yes, unless `dynamic: true` | — | `{ url, appId, appSecret }` — the `iam` instance and app registration this mount authenticates against. |
 | `dynamic` | No | `false` | When `true`, credentials are resolved per request via a `resolveIamAppCredentials(event)` server util the consuming app must define (auto-imported, e.g. from its own `server/utils/`). Use this when one mount serves many logical clients (e.g. one per tenant) instead of one fixed app. |
 | `authenticatedPath` | No | `/authenticated` | Path on this app's own origin that `iam` redirects back to with `?code=&state=`. Must exactly match the `authenticated_url` registered with `iam`. |
 | `afterLoginPath` | No | `/dashboard` | Where to send a visitor who already has a valid session. |
@@ -46,9 +46,9 @@ export default defineNuxtConfig({
 | `routePrefix` | No | `/api/auth` | Prefix for the module's three server routes (login/logout/session). Set this when the consuming app already owns routes at that prefix (e.g. its own tenant auth). |
 | `composableAlias` | No | `useAuth` | Name the auto-imported composable is registered under. Set this when the consuming app already has its own `useAuth()` composable. |
 
-`iam.url`/`appId`/`clientSecret` are server-only secrets — set them via
+`iam.url`/`appId`/`appSecret` are server-only secrets — set them via
 environment variables (`NUXT_IAM_URL`, `NUXT_IAM_APP_ID`,
-`NUXT_IAM_CLIENT_SECRET`) in a `.env` file, never committed. Nitro maps them
+`NUXT_IAM_APP_SECRET`) in a `.env` file, never committed. Nitro maps them
 onto `runtimeConfig.iam.*` at server startup because that's the exact
 `runtimeConfig` path the static-credentials value lives at — this mapping
 only works for one static instance per app (see "Multiple mounts" below).
@@ -61,7 +61,7 @@ secrets.
 ```
 NUXT_IAM_URL=https://iam.tryyourideas.com
 NUXT_IAM_APP_ID=your-app-id
-NUXT_IAM_CLIENT_SECRET=your-client-secret
+NUXT_IAM_APP_SECRET=your-app-secret
 DATABASE_URL=postgres://user:pass@localhost:5432/yourdb
 NUXT_ADD_DEBUG_LOGS=false
 ```
@@ -83,7 +83,7 @@ export default defineNuxtConfig({
     iam: {
       url: '', // NUXT_IAM_URL
       appId: '', // NUXT_IAM_APP_ID
-      clientSecret: '', // NUXT_IAM_CLIENT_SECRET
+      appSecret: '', // NUXT_IAM_APP_SECRET
     },
     // All optional — shown here with their defaults:
     // authenticatedPath: '/authenticated',
@@ -115,7 +115,7 @@ export default defineNuxtConfig({
           iam: {
             url: '', // NUXT_IAM_URL
             appId: '', // NUXT_IAM_APP_ID
-            clientSecret: '', // NUXT_IAM_CLIENT_SECRET
+            appSecret: '', // NUXT_IAM_APP_SECRET
           },
           routePrefix: '/api/admin/auth/iam',
           composableAlias: 'useIamAuth',
@@ -133,7 +133,7 @@ export default defineNuxtConfig({
 ```
 
 Only one *static* instance per app can rely on the `NUXT_IAM_URL`/
-`NUXT_IAM_APP_ID`/`NUXT_IAM_CLIENT_SECRET` env-var mapping described above —
+`NUXT_IAM_APP_ID`/`NUXT_IAM_APP_SECRET` env-var mapping described above —
 a second static mount would collide on the same `runtimeConfig.iam` key.
 Use `dynamic: true` for any additional mount.
 
@@ -141,7 +141,7 @@ Use `dynamic: true` for any additional mount.
 
 When `dynamic: true`, define a `resolveIamAppCredentials(event)` server
 util in the consuming app (e.g. `server/utils/resolveIamAppCredentials.ts`)
-that returns `{ url, appId, clientSecret }` for the current request — for
+that returns `{ url, appId, appSecret }` for the current request — for
 example, looked up by tenant subdomain:
 
 ```ts
@@ -151,7 +151,7 @@ export async function resolveIamAppCredentials(event: H3Event) {
   return {
     url: tenant.iamUrl,
     appId: tenant.iamAppId,
-    clientSecret: tenant.iamClientSecret,
+    appSecret: tenant.iamAppSecret,
   }
 }
 ```

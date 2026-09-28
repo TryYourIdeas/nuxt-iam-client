@@ -39,7 +39,7 @@ export default defineNuxtConfig({
     iam: {
       url: '', // NUXT_IAM_URL
       appId: '', // NUXT_IAM_APP_ID
-      clientSecret: '', // NUXT_IAM_CLIENT_SECRET
+      appSecret: '', // NUXT_IAM_APP_SECRET
     },
     // All optional — shown here with their defaults:
     // authenticatedPath: '/authenticated',
@@ -52,8 +52,8 @@ export default defineNuxtConfig({
 })
 ```
 
-`iam.url`/`appId`/`clientSecret` are server-only secrets — set them via env
-vars (`NUXT_IAM_URL`, `NUXT_IAM_APP_ID`, `NUXT_IAM_CLIENT_SECRET`), never
+`iam.url`/`appId`/`appSecret` are server-only secrets — set them via env
+vars (`NUXT_IAM_URL`, `NUXT_IAM_APP_ID`, `NUXT_IAM_APP_SECRET`), never
 committed. The four path options are public (client-readable) since they're
 just route paths, not secrets.
 

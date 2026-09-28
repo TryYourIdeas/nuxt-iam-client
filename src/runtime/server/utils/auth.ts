@@ -13,7 +13,7 @@ export interface AuthAttempt {
 export interface IamCredentials {
   url: string
   appId: string
-  clientSecret: string
+  appSecret: string
 }
 
 export interface IamClientInstanceConfig {
@@ -112,7 +112,7 @@ export function decodeJwtPayload(jwt: string): Record<string, unknown> {
 }
 
 /**
- * Resolves the {url, appId, clientSecret} this instance should use for the
+ * Resolves the {url, appId, appSecret} this instance should use for the
  * current request. Static instances return their fixed config; dynamic
  * instances (one mount serving many logical clients, e.g. one per tenant)
  * delegate to `resolveIamAppCredentials`, a server util the CONSUMING app
@@ -153,7 +153,7 @@ export async function exchangeCode(credentials: IamCredentials, code: string): P
       grant_type: 'authorization_code',
       code,
       client_id: credentials.appId,
-      client_secret: credentials.clientSecret,
+      client_secret: credentials.appSecret,
     }),
   })
 
@@ -175,7 +175,7 @@ export async function refreshAccessToken(credentials: IamCredentials, refreshTok
       grant_type: 'refresh_token',
       refresh_token: refreshToken,
       client_id: credentials.appId,
-      client_secret: credentials.clientSecret,
+      client_secret: credentials.appSecret,
     }),
   })
 

@@ -8,7 +8,7 @@ workspace.
 Before writing any code, the consuming app must be registered as a client
 application with the `iam` instance it will authenticate against. This
 registration produces the `app_id` and `client_secret` you'll use as
-`NUXT_IAM_APP_ID`/`NUXT_IAM_CLIENT_SECRET`, and requires an
+`NUXT_IAM_APP_ID`/`NUXT_IAM_APP_SECRET`, and requires an
 `authenticated_url` — the exact path on your app's own origin that `iam`
 redirects back to. This must match the `authenticatedPath` option
 (default `/authenticated`) exactly.
@@ -44,7 +44,7 @@ export default defineNuxtConfig({
     iam: {
       url: '', // NUXT_IAM_URL
       appId: '', // NUXT_IAM_APP_ID
-      clientSecret: '', // NUXT_IAM_CLIENT_SECRET
+      appSecret: '', // NUXT_IAM_APP_SECRET
     },
   },
 })
@@ -54,7 +54,7 @@ export default defineNuxtConfig({
 # .env
 NUXT_IAM_URL=https://iam.tryyourideas.com
 NUXT_IAM_APP_ID=...
-NUXT_IAM_CLIENT_SECRET=...
+NUXT_IAM_APP_SECRET=...
 DATABASE_URL=postgres://user:pass@localhost:5432/yourdb
 ```
 
@@ -163,7 +163,7 @@ array (Nuxt silently drops a second entry with the same module name).
   instance of this class of bug.
 - **`nuxt-iam-client: instance "..." needs iam credentials unless
   dynamic: true`**: the `iam` option is missing for a static instance —
-  either supply `iam: { url, appId, clientSecret }` or set `dynamic: true`
+  either supply `iam: { url, appId, appSecret }` or set `dynamic: true`
   and define `resolveIamAppCredentials(event)`.
 - **Login redirects to `notAuthenticatedPath` immediately**: enable
   `NUXT_ADD_DEBUG_LOGS=true` and check the `[debug:iam-client:callback]`
