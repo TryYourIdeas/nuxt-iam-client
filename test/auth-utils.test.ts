@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 import { audienceMatches, decodeJwtPayload } from '../src/runtime/server/utils/auth'
+import { withAppBaseURL } from '../src/runtime/server/utils/auth'
 import { attemptCookieName, sessionCookieName, resolveIamCredentials } from '../src/runtime/server/utils/auth'
 import { createIamSession, getIamSession, setIamSessionMetadata, destroyIamSession } from '../src/runtime/server/utils/auth'
 
@@ -144,5 +145,31 @@ describe('session persistence', () => {
     await setIamSessionMetadata(sessionEvent, 'meta-instance', { tenantUserId: 'u1' })
     const fetched = await getIamSession(sessionEvent, 'meta-instance')
     expect(fetched?.metadata).toEqual({ tenantUserId: 'u1' })
+  })
+})
+
+describe('withAppBaseURL', () => {
+  const withBase = (baseURL?: string) => vi.stubGlobal('useRuntimeConfig', () => ({ app: baseURL === undefined ? {} : { baseURL } }))
+  afterEach(() => vi.unstubAllGlobals())
+  const event = {} as never
+
+  it('prefixes a root-relative path with the app base URL', () => {
+    withBase('/myteam/')
+    expect(withAppBaseURL(event, '/not-authenticated')).toBe('/myteam/not-authenticated')
+    expect(withAppBaseURL(event, '/')).toBe('/myteam/')
+  })
+
+  it('leaves the path alone when the app is served at the root', () => {
+    withBase('/')
+    expect(withAppBaseURL(event, '/not-authenticated')).toBe('/not-authenticated')
+    withBase(undefined)
+    expect(withAppBaseURL(event, '/not-authenticated')).toBe('/not-authenticated')
+  })
+
+  it('does not double-prefix, and ignores external or protocol-relative targets', () => {
+    withBase('/myteam/')
+    expect(withAppBaseURL(event, '/myteam/not-authenticated')).toBe('/myteam/not-authenticated')
+    expect(withAppBaseURL(event, 'https://other.example.com/x')).toBe('https://other.example.com/x')
+    expect(withAppBaseURL(event, '//other.example.com/x')).toBe('//other.example.com/x')
   })
 })

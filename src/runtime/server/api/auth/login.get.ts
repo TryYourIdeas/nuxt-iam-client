@@ -10,7 +10,7 @@ export default defineEventHandler(async (event) => {
   const session = await getIamSession(event, instanceId)
   if (session) {
     iamDebugLog('login', 'already has a valid session, skipping iam redirect', { instanceId, email: session.email })
-    return sendRedirect(event, publicConfig.afterLoginPath)
+    return sendRedirect(event, withAppBaseURL(event, publicConfig.afterLoginPath))
   }
 
   const credentials = await resolveIamCredentials(event, instanceId)
