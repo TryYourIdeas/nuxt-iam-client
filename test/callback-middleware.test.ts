@@ -16,6 +16,7 @@ vi.stubGlobal('getAuthAttempt', (_e: unknown, instanceId: string) => attempts[in
 vi.stubGlobal('clearAuthAttempt', clearAuthAttempt)
 vi.stubGlobal('resolveIamCredentials', resolveIamCredentials)
 vi.stubGlobal('exchangeCode', exchangeCode)
+vi.stubGlobal('withAppBaseURL', (_e: unknown, path: string) => `/myteam${path}`)
 vi.stubGlobal('useRuntimeConfig', () => ({
   public: { iamClient: { admin: { notAuthenticatedPath: '/admin/not-authenticated' }, tenant: { notAuthenticatedPath: '/not-authenticated' } } },
 }))
@@ -54,6 +55,16 @@ describe('callback middleware with several mounts on one origin', () => {
     await handler(eventFor('tenant', 'code=abc&state=tenant-state'))
 
     expect(resolveIamCredentials).toHaveBeenCalledTimes(1)
+  })
+
+  it('redirects a rejected callback to the not-authenticated path under the app base URL', async () => {
+    attempts.tenant = { state: 'tenant-state', nonce: 'n' }
+    resolveIamCredentials.mockResolvedValue(null) // matching state, but no credentials -> fail()
+    const handler = (await import('../src/runtime/server/middleware/auth')).default as (e: unknown) => Promise<unknown>
+
+    const result = await handler(eventFor('tenant', 'code=abc&state=tenant-state'))
+
+    expect(result).toEqual({ redirectedTo: '/myteam/not-authenticated' })
   })
 
   it('passes through when this mount has no attempt cookie at all', async () => {

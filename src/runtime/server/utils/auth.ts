@@ -64,6 +64,19 @@ function iamBaseUrl(iamUrl: string): string {
   return iamUrl.replace(/\/+$/, '')
 }
 
+/**
+ * Prefixes an app-relative redirect target (e.g. `/not-authenticated`) with the consuming app's
+ * `app.baseURL`, so an app served under a sub-path (`/myteam/`) isn't redirected to the host root.
+ * Paths that already carry the prefix, and anything that isn't a plain absolute path, are left as is.
+ */
+export function withAppBaseURL(event: H3Event, path: string): string {
+  if (!path.startsWith('/') || path.startsWith('//')) return path
+  const config = useRuntimeConfig(event) as unknown as { app?: { baseURL?: string } }
+  const prefix = (config.app?.baseURL ?? '/').replace(/\/+$/, '')
+  if (!prefix) return path
+  return path === prefix || path.startsWith(`${prefix}/`) ? path : `${prefix}${path}`
+}
+
 export function attemptCookieName(instanceId: string): string {
   return `iam_attempt_${instanceId}`
 }

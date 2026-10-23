@@ -43,7 +43,7 @@ async function publicConfigFor(event: H3Event, instanceId: string): Promise<IamC
 async function fail(event: H3Event, instanceId: string, reason: string) {
   iamDebugLog('callback', `rejecting callback: ${reason}`, { instanceId })
   const publicConfig = await publicConfigFor(event, instanceId)
-  return sendRedirect(event, publicConfig.notAuthenticatedPath)
+  return sendRedirect(event, withAppBaseURL(event, publicConfig.notAuthenticatedPath))
 }
 
 async function handleAuthCallback(event: H3Event, instanceId: string, code: string, state: string, attempt: AuthAttempt) {
