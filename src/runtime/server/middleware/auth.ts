@@ -49,7 +49,15 @@ async function fail(event: H3Event, instanceId: string, reason: string) {
 async function handleAuthCallback(event: H3Event, instanceId: string, code: string, state: string, attempt: AuthAttempt) {
   const url = getRequestURL(event)
 
-  if (state !== attempt.state) return fail(event, instanceId, 'state mismatch')
+  if (state !== attempt.state) {
+    // A leftover attempt cookie from this mount's own earlier, abandoned login (they live for
+    // 10 minutes) must not swallow another mount's callback: with several mounts on one origin
+    // each middleware sees every callback, and the first one registered would otherwise reject
+    // a callback that belongs to a later mount. Pass through - the owning mount completes it
+    // only if its own cookie matches, and a callback nobody owns creates no session.
+    iamDebugLog('callback', 'state does not match this mount\'s attempt, passing through', { instanceId })
+    return
+  }
 
   const credentials = await resolveIamCredentials(event, instanceId)
   if (!credentials) return fail(event, instanceId, 'no iam credentials resolved for this request')
