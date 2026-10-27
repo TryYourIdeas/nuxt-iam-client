@@ -42,4 +42,9 @@ describe('useAuthImpl composable', () => {
     expect(fetchMock).toHaveBeenCalledWith('/custom/prefix/logout', { method: 'POST' })
     expect(navigateToMock).toHaveBeenCalledWith('/bye')
   })
+
+  it('throws a clear error for an instance that is not configured', async () => {
+    const { useAuthImpl } = await import('../src/runtime/composables/useAuth')
+    expect(() => useAuthImpl('missing')).toThrow('no configuration for instance "missing"')
+  })
 })
