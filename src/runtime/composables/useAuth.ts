@@ -5,7 +5,9 @@ export interface AuthUser {
 
 export function useAuthImpl(instanceId: string) {
   const config = useRuntimeConfig()
-  const publicConfig = (config.public.iamClient as Record<string, { routePrefix: string; afterLogoutPath: string }>)[instanceId]
+  const instanceConfig = (config.public.iamClient as Record<string, { routePrefix: string; afterLogoutPath: string }>)[instanceId]
+  if (!instanceConfig) throw new Error(`nuxt-iam-client: no configuration for instance "${instanceId}"`)
+  const publicConfig = instanceConfig
   const user = useState<AuthUser | null>(`auth-user-${instanceId}`, () => null)
   const status = computed(() => (user.value ? 'authenticated' : 'unauthenticated'))
   const requestFetch = useRequestFetch()
