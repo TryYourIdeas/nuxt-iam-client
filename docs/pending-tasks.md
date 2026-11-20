@@ -12,3 +12,11 @@ Tracks work identified or discussed for `nuxt-iam-client` but not yet built, so 
 - **Back-channel logout receiver.** `iam`'s `POST /api/logout` now revokes every refresh token for the user and POSTs a `logout_token` to each registered app's `backchannel_logout_url` on logout. This module registers no such endpoint and has no handler for it, so a consuming app (e.g. `home`) never finds out when the user's `iam`-level session ends elsewhere — its own local session just keeps working until the access token naturally expires or a refresh fails.
 
 Full protocol reference: `web/iam/docs/user-guides/IAM_CLIENT_IMPLEMENTATION.md` (framework-agnostic) and `web/iam/docs/user-guides/NUXT_IAM_CLIENT_IMPLEMENTATION.md` (this module's own known-gaps section).
+
+## Adopt the access-token verifier in the apps
+
+`verifyAccessToken`/`requireAccessToken` exist (2026-11-20) but no app calls them yet. First adopters: `myteam`'s
+admin API for exchanged bearer tokens (D8), then every application an agent calls (SEC-12 in
+`web/docs/security/design-changes-proposal.md`). The same verifier can also replace `decodeJwtPayload()`'s
+unverified ID-token checks in the login callback (first item above), with an ID-token profile (`typ: JWT`).
+

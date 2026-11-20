@@ -59,6 +59,15 @@ can adopt the same `iam` integration without re-implementing it.
   flow logs via `iamDebugLog`, enabled by setting
   `NUXT_ADD_DEBUG_LOGS=true`; silent otherwise.
 
+## Verifying access tokens on API routes
+
+- `requireAccessToken(event, options)` — route guard for API routes called with an `iam` access token
+  (users, and agents where `principals` allows them). 401 with `WWW-Authenticate: Bearer
+  error="invalid_token"` on any failure; the verified token is on `event.context.accessToken`.
+- `verifyAccessToken(token, options)` — the same checks without h3: `typ: at+jwt`, allowed `alg`, signature
+  against the issuer's cached JWKS, exact `iss`, `aud`, `exp`/`nbf`/`iat` with 60 s skew.
+- See the README section "Verifying access tokens on API routes" for options and an example.
+
 ## What it does NOT provide
 
 Any actual pages or UI. The consuming app still owns:
