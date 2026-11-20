@@ -1,5 +1,7 @@
 import { createPublicKey, createVerify, verify as verifyOneShot, type JsonWebKey, type KeyObject } from 'node:crypto'
+import { createError, getHeader, setResponseHeader, type H3Event } from 'h3'
 import { getJwk, type Jwk } from './jwks'
+import { iamDebugLog } from './iamDebugLog'
 
 /**
  * Verification of `iam` access tokens on API routes (RFC 9068 s4, RFC 8725 s3).
@@ -157,4 +159,57 @@ export async function verifyAccessToken(token: string, options: VerifyAccessToke
     exp: claims.exp,
     raw: claims,
   }
+}
+
+export type PrincipalKind = VerifiedAccessToken['principalType']
+
+export interface RequireAccessTokenOptions extends VerifyAccessTokenOptions {
+  /** Principal kinds this route accepts. Default `['user']`: agents must be allowed explicitly. */
+  principals?: PrincipalKind[]
+}
+
+declare module 'h3' {
+  interface H3EventContext {
+    accessToken?: VerifiedAccessToken
+  }
+}
+
+function unauthorized(event: H3Event): never {
+  setResponseHeader(event, 'WWW-Authenticate', 'Bearer error="invalid_token"')
+  throw createError({ statusCode: 401, statusMessage: 'Unauthorized', data: { message: 'Invalid or missing access token.' } })
+}
+
+/**
+ * Route guard: verifies the request's bearer access token, checks the principal kind, stores the result on
+ * `event.context.accessToken` and returns it. Any failure is a 401 with `WWW-Authenticate: Bearer
+ * error="invalid_token"`; the specific reason is only logged (NUXT_ADD_DEBUG_LOGS), never returned.
+ */
+export async function requireAccessToken(event: H3Event, options: RequireAccessTokenOptions): Promise<VerifiedAccessToken> {
+  const authorization = getHeader(event, 'authorization')
+  const bearer = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length).trim() : ''
+  if (!bearer) {
+    iamDebugLog('accessToken', 'rejecting: no bearer token', {})
+    unauthorized(event)
+  }
+
+  let verified: VerifiedAccessToken
+  try {
+    verified = await verifyAccessToken(bearer, options)
+  } catch (error) {
+    const reason = error instanceof AccessTokenError ? error.reason : 'unexpected_error'
+    iamDebugLog('accessToken', 'rejecting: token failed verification', { reason })
+    unauthorized(event)
+  }
+
+  const principals = options.principals ?? ['user']
+  if (!principals.includes(verified.principalType)) {
+    iamDebugLog('accessToken', 'rejecting: principal kind not accepted on this route', {
+      principalType: verified.principalType,
+      sub: verified.sub,
+    })
+    unauthorized(event)
+  }
+
+  event.context.accessToken = verified
+  return verified
 }
