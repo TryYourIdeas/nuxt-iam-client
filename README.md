@@ -78,7 +78,9 @@ Two auto-imported server utilities verify `iam` access tokens sent as `Authoriza
 
 - `verifyAccessToken(token, options)` — returns the verified claims or throws `AccessTokenError` (with a
   `reason`). It requires the header `typ: at+jwt` (so an ID token is refused), an allowed `alg` (default
-  `RS256`; `none` never) matching the JWKS key's `alg`, a valid signature from the issuer's JWKS, `iss` equal
+  `RS256`; `none` never), a JWKS key of the matching type (RSA ≥ 2048 bits for `RS*`, the right EC curve for
+  `ES*`, Ed25519/Ed448 for `EdDSA`; `use` must be `sig` when present; its `alg`, when published, must equal the
+  header's), a valid signature from the issuer's JWKS, `iss` equal
   to `issuer`, `aud` containing one of `audience`, and `exp`/`nbf`/`iat` within 60 s of clock skew.
 - `requireAccessToken(event, options)` — the route guard. Reads the bearer token, verifies it, accepts only
   the principal kinds in `principals` (default `['user']`; agents must be allowed explicitly), stores the
@@ -99,7 +101,8 @@ export default defineEventHandler(async (event) => {
 ```
 
 The JWKS (`<issuer>/.well-known/jwks.json` by default, or `jwksUri`) is cached in memory for 10 minutes; an
-unknown `kid` (for example right after `iam` rotates its key) triggers at most one refetch per 30 seconds.
+unknown `kid` (for example right after `iam` rotates its key) triggers at most one refetch per 30 seconds, concurrent requests share one fetch, fetches time out after 5 s,
+and fetch failures are always logged with `console.warn`.
 Requires `iam` to issue `at+jwt` access tokens and a set `IAM_ISSUER` (iam branch
 `feat/issuer-and-resource-uri`). Deciding which route needs which permission stays in the app.
 

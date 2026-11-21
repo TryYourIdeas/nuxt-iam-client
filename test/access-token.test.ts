@@ -1,3 +1,4 @@
+import { createSign, generateKeyPairSync } from 'node:crypto'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AccessTokenError, verifyAccessToken, type VerifyAccessTokenOptions } from '../src/runtime/server/utils/accessToken'
 import { resetJwksCacheForTests } from '../src/runtime/server/utils/jwks'
@@ -35,7 +36,7 @@ describe('verifyAccessToken', () => {
       jti: 'j1',
       exp: NOW_S + 300,
     })
-    expect(fetchMock).toHaveBeenCalledWith(`${ISSUER}/.well-known/jwks.json`)
+    expect(fetchMock).toHaveBeenCalledWith(`${ISSUER}/.well-known/jwks.json`, expect.objectContaining({ signal: expect.any(AbortSignal) }))
   })
 
   it('reports agent tokens and the acting party', async () => {
@@ -109,5 +110,42 @@ describe('verifyAccessToken', () => {
     ['non-JSON header', `${Buffer.from('nope').toString('base64url')}.e30.sig`],
   ])('rejects a malformed token (%s)', async (_label, value) => {
     expect(await reasonOf(verifyAccessToken(value, options()))).toBe('malformed')
+  })
+
+  describe('key type is bound to the algorithm', () => {
+    function tokenSignedBy(privateKey: Parameters<ReturnType<typeof createSign>['sign']>[0], kid: string) {
+      const input = `${b64({ alg: 'RS256', typ: 'at+jwt', kid })}.${b64({ iss: ISSUER, sub: 'alice', aud: AUDIENCE, exp: NOW_S + 300 })}`
+      return `${input}.${createSign('SHA256').update(input).sign(privateKey).toString('base64url')}`
+    }
+    function serving(jwk: Record<string, unknown>) {
+      return vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ keys: [jwk] }) }) as unknown as Response)
+    }
+
+    it('refuses an EC key presented for RS256', async () => {
+      const ec = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+      const jwk = { ...ec.publicKey.export({ format: 'jwk' }), kid: 'ec1' }
+      expect(await reasonOf(verifyAccessToken(tokenSignedBy(ec.privateKey, 'ec1'), options({ fetch: serving(jwk) })))).toBe(
+        'key_type_mismatch',
+      )
+    })
+
+    it('refuses an RSA key shorter than 2048 bits', async () => {
+      const weak = generateKeyPairSync('rsa', { modulusLength: 1024 })
+      const jwk = { ...weak.publicKey.export({ format: 'jwk' }), kid: 'weak' }
+      expect(await reasonOf(verifyAccessToken(tokenSignedBy(weak.privateKey, 'weak'), options({ fetch: serving(jwk) })))).toBe(
+        'weak_key',
+      )
+    })
+
+    it('refuses a key published for encryption', async () => {
+      expect(
+        await reasonOf(verifyAccessToken(token(), options({ fetch: serving({ ...publicJwk, use: 'enc' }) }))),
+      ).toBe('key_type_mismatch')
+    })
+
+    it('accepts an RSA key whose JWK omits alg', async () => {
+      const { alg: _alg, ...withoutAlg } = publicJwk
+      await expect(verifyAccessToken(token(), options({ fetch: serving(withoutAlg) }))).resolves.toMatchObject({ sub: 'alice' })
+    })
   })
 })

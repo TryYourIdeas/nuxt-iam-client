@@ -21,7 +21,7 @@ describe('getJwk', () => {
   it('fetches the JWKS and returns the key with the requested kid', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jwksResponse([keyA]))
     await expect(getJwk(URI, 'a', { fetch: fetchMock, now: clock })).resolves.toEqual(keyA)
-    expect(fetchMock).toHaveBeenCalledWith(URI)
+    expect(fetchMock).toHaveBeenCalledWith(URI, expect.objectContaining({ signal: expect.any(AbortSignal) }))
   })
 
   it('serves from cache for 600 seconds, then refetches', async () => {
@@ -66,5 +66,33 @@ describe('getJwk', () => {
     await expect(getJwk(URI, 'a', { fetch: fetchMock, now: clock })).resolves.toBeNull()
     now += 31_000
     await expect(getJwk(URI, 'a', { fetch: fetchMock, now: clock })).resolves.toEqual(keyA)
+  })
+
+  function delayedFetch(keys: unknown[]) {
+    return vi.fn(
+      () => new Promise<Response>((resolve) => setTimeout(() => resolve(jwksResponse(keys)), 20)),
+    )
+  }
+
+  it('makes one fetch for many concurrent requests on a cold cache', async () => {
+    const fetchMock = delayedFetch([keyA])
+    const results = await Promise.all(Array.from({ length: 50 }, () => getJwk(URI, 'a', { fetch: fetchMock, now: clock })))
+    expect(results.every((key) => key?.kid === 'a')).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('makes one refetch for a flood of concurrent unknown kids', async () => {
+    const fetchMock = delayedFetch([keyA])
+    await getJwk(URI, 'a', { fetch: fetchMock, now: clock })
+    await Promise.all(Array.from({ length: 50 }, (_, i) => getJwk(URI, `bogus-${i}`, { fetch: fetchMock, now: clock })))
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('always logs a warning when the JWKS cannot be fetched', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fetchMock = vi.fn().mockRejectedValueOnce(new Error('network down'))
+    await getJwk(URI, 'a', { fetch: fetchMock, now: clock })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(URI), expect.anything())
+    warn.mockRestore()
   })
 })

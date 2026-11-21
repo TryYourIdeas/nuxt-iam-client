@@ -40,6 +40,8 @@ export type AccessTokenErrorReason =
   | 'alg_not_allowed'
   | 'unknown_key'
   | 'key_alg_mismatch'
+  | 'key_type_mismatch'
+  | 'weak_key'
   | 'bad_signature'
   | 'wrong_issuer'
   | 'wrong_audience'
@@ -68,6 +70,21 @@ const VERIFIERS: Record<string, Verifier> = {
   ES256: hashVerifier('SHA256', 'ieee-p1363'),
   ES384: hashVerifier('SHA384', 'ieee-p1363'),
   EdDSA: (input, signature, key) => verifyOneShot(null, Buffer.from(input), key, signature),
+}
+
+/** Which key a JWS algorithm requires (RFC 8725 s3.1: each key is used with exactly one algorithm). */
+const MIN_RSA_BITS = 2048
+function keyMatchesAlgorithm(alg: string, key: KeyObject): 'ok' | 'key_type_mismatch' | 'weak_key' {
+  const type = key.asymmetricKeyType
+  const details = key.asymmetricKeyDetails ?? {}
+  if (alg.startsWith('RS')) {
+    if (type !== 'rsa') return 'key_type_mismatch'
+    return (details.modulusLength ?? 0) >= MIN_RSA_BITS ? 'ok' : 'weak_key'
+  }
+  if (alg === 'ES256') return type === 'ec' && details.namedCurve === 'prime256v1' ? 'ok' : 'key_type_mismatch'
+  if (alg === 'ES384') return type === 'ec' && details.namedCurve === 'secp384r1' ? 'ok' : 'key_type_mismatch'
+  if (alg === 'EdDSA') return type === 'ed25519' || type === 'ed448' ? 'ok' : 'key_type_mismatch'
+  return 'key_type_mismatch'
 }
 
 function decodeJson(part: string): Record<string, unknown> {
@@ -113,9 +130,19 @@ export async function verifyAccessToken(token: string, options: VerifyAccessToke
   // Each key is used with exactly one algorithm (RFC 8725 s3.1).
   if (jwk.alg && jwk.alg !== alg) throw new AccessTokenError('key_alg_mismatch')
 
+  if (jwk.use && jwk.use !== 'sig') throw new AccessTokenError('key_type_mismatch')
+
+  let key: KeyObject
+  try {
+    key = createPublicKey({ key: jwk as JsonWebKey, format: 'jwk' })
+  } catch {
+    throw new AccessTokenError('key_type_mismatch')
+  }
+  const keyCheck = keyMatchesAlgorithm(alg, key)
+  if (keyCheck !== 'ok') throw new AccessTokenError(keyCheck)
+
   let valid: boolean
   try {
-    const key = createPublicKey({ key: jwk as JsonWebKey, format: 'jwk' })
     valid = VERIFIERS[alg]!(`${headerPart}.${payloadPart}`, Buffer.from(signaturePart, 'base64url'), key)
   } catch {
     valid = false
