@@ -173,3 +173,30 @@ the composable, session cookies) reads the resolved value for that
 instance — there is no hardcoded default left in `src/runtime/**`. See
 `docs/learnings/route-prefix-hardcoded-in-composable.md` for the bug this
 guards against if a new per-instance option is ever added.
+
+## Verifying bearer access tokens on API routes
+
+Optional: only for apps whose API routes accept `iam` access tokens (`Authorization: Bearer ...`) instead of, or as
+well as, the SSO session cookie. There is no module option for it; pass the values to `requireAccessToken` /
+`verifyAccessToken` in the route. Define them in the consuming app's `.env`:
+
+| Variable (suggested name) | Required | Value |
+|---|---|---|
+| `NUXT_IAM_ISSUER` | Yes | `iam`'s `IAM_ISSUER`, **exactly** (e.g. `https://iam.tryyourideas.com`). Tokens whose `iss` differs by even a trailing slash are refused. Not the same as `NUXT_IAM_URL` if `iam` is reached through an internal address. |
+| `NUXT_IAM_AUDIENCE` | Yes | This app's resource URI as stored in `iam` (admin page of the app), and/or its app id. Comma-separate several and split them into an array. |
+| `NUXT_IAM_JWKS_URI` | No | Only if the JWKS is not at `<issuer>/.well-known/jwks.json`, e.g. to fetch it over an internal address. |
+
+```ts
+const token = await requireAccessToken(event, {
+  issuer: process.env.NUXT_IAM_ISSUER!,
+  audience: process.env.NUXT_IAM_AUDIENCE!.split(','),
+  jwksUri: process.env.NUXT_IAM_JWKS_URI || undefined,
+  principals: ['user'], // add 'agent' only on routes agents may call
+})
+```
+
+Other options keep safe defaults: `algorithms` (`['RS256']`; never add `none`), `clockToleranceSeconds` (60).
+
+Network: the app's server must reach the JWKS URL. Keys are cached for 10 minutes; fetches time out after 5 s and
+failures are logged with `console.warn` (`[nuxt-iam-client] JWKS fetch failed ...`). Set `NUXT_ADD_DEBUG_LOGS=true`
+to log why individual tokens are refused (`wrong_issuer`, `wrong_audience`, `key_type_mismatch`, ...).
