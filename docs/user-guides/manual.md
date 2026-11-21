@@ -153,6 +153,19 @@ section of `docs/user-guides/config.md` — register a single module entry
 with an `instances` array rather than repeating the module in the `modules`
 array (Nuxt silently drops a second entry with the same module name).
 
+## Protecting an API route with an access token
+
+1. Make sure `iam` sets `IAM_ISSUER` and issues `at+jwt` access tokens (iam ≥ the
+   `feat/issuer-and-resource-uri` change).
+2. Give the app its expected audience: its resource URI registered in `iam`, its app id, or both.
+3. In the route, call `requireAccessToken(event, { issuer, audience })`. Add `principals: ['user', 'agent']`
+   only on routes agents may call.
+4. Use `event.context.accessToken` (or the returned value) for `sub`, `scopes`, `principalType`, `tenantId`
+   and `actor`. A request without a valid token gets 401 before your code runs.
+5. To see why a token was refused, set `NUXT_ADD_DEBUG_LOGS=true`: the log line
+   `[debug:iam-client:accessToken] rejecting: ...` carries the reason (`wrong_type`, `wrong_audience`,
+   `expired`, ...).
+
 ## Troubleshooting
 
 - **`useAuth().fetchSession()` always returns `null`, but a server-side
